@@ -10,7 +10,7 @@ import OrgHealth from "./pages/OrgHealth";
 import RestExplorer from "./pages/RestExplorer";
 import DebugLogModal from "./components/DebugLogModal";
 import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
-import { api, waitForBackend, isTauri } from "./api/client";
+import { api, waitForBackend, isTauri, openExternal } from "./api/client";
 import { debugLog, useDebugLog } from "./debugLog";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -644,6 +644,15 @@ export default function App() {
                 <p className="text-xs text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-700 pt-3">
                   Unofficial tool — not affiliated with Salesforce. Read-only by default; no data is modified unless explicitly committed.
                 </p>
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-gray-500 dark:text-gray-400">If Avio saves you time, you can support its development.</span>
+                  <a href="https://ko-fi.com/doppiomacchiato"
+                    onClick={(e) => { e.preventDefault(); openExternal(e.currentTarget.href).catch(() => {}); }}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-[#FF5E5B] hover:bg-[#e8514e] text-white font-semibold"
+                    target="_blank" rel="noreferrer">
+                    ☕ Support on Ko-fi
+                  </a>
+                </div>
                 {/* Easter egg — with gratitude */}
                 <p className="text-xs text-gray-300 dark:text-gray-600 text-center tracking-wide pt-1 select-none" title="with gratitude 🐦">
                   ✦ Carlos · Tyler · Bruce ✦
@@ -748,6 +757,7 @@ export default function App() {
                         <code className="text-xs bg-gray-900 text-green-400 px-2 py-1.5 rounded font-mono">sf --version</code>
                       </div>
                       <a href="https://developer.salesforce.com/tools/salesforcecli"
+                        onClick={(e) => { e.preventDefault(); openExternal(e.currentTarget.href).catch(() => {}); }}
                         className="text-xs text-blue-500 hover:text-blue-600 mt-1 underline"
                         target="_blank" rel="noreferrer">
                         developer.salesforce.com/tools/salesforcecli →

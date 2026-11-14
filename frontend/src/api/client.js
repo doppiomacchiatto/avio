@@ -160,6 +160,17 @@ export function isTauri() {
   return typeof window !== "undefined" && !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
 }
 
+// Open a URL in the user's default browser. A plain <a target="_blank"> does nothing in the
+// packaged WebView, so go through the Tauri shell plugin (https:// links only).
+export async function openExternal(url) {
+  if (isTauri()) {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 // Resolves to the chosen folder, or null if the user cancelled. Throws if the
 // native dialog is unavailable or fails, so callers can show an error.
 export async function openDirDialog() {
