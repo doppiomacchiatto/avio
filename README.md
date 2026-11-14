@@ -6,7 +6,7 @@ Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (
 
 ## Download
 
-**[⬇ Download the latest release](https://github.com/doppiomacchiatto/avio/releases/latest)**: pick `Avio_<version>_x64-setup.exe` (an `.msi` is also attached).
+**[⬇ Download from the Releases page](https://github.com/doppiomacchiatto/avio/releases)**: pick the newest release and download `Avio_<version>_x64-setup.exe` (an `.msi` is also attached).
 
 | Platform | Status |
 |---|---|
