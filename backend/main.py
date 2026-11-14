@@ -655,10 +655,11 @@ class ChatRequest(BaseModel):
     system:      Optional[str]  = None
     org_context: Optional[dict] = None
     model:       Optional[str]  = None   # override from settings
+    force_skills: Optional[list[str]] = None   # skills to inject regardless of keywords
 
 @app.post("/api/ai/chat")
 def ai_chat(req: ChatRequest):
-    augmented_system = augment_system(req.system, req.messages)
+    augmented_system = augment_system(req.system, req.messages, req.force_skills)
     def _stream():
         try:
             for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None):

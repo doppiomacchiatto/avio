@@ -128,17 +128,26 @@ _SOQL_RE = re.compile(
 )
 
 _APEX_RE = re.compile(
-    r"\b(apex|\.cls|trigger|batch\s+apex|queueable|schedulable|"
+    r"\.cls\b|(?<!\w)(apex|trigger|batch\s+apex|queueable|schedulable|"
     r"invocable|aura.enabled|rest.resource|soql.inside.loop|"
     r"bulkif|with.sharing|without.sharing|database\.(insert|update|delete)|"
     r"dml\s+statement|future\s+method|platform.event|apex.class|"
-    r"apex.trigger|selector\s+class|service\s+class|domain\s+class)\b",
+    r"apex.trigger|selector\s+class|service\s+class|domain\s+class|"
+    r"test\s+class(es)?|unit\s+tests?|@?istest|code\s+coverage|"
+    r"test\s+data\s+factory|testdatafactory|debug\s+logs?)(?!\w)",
     re.IGNORECASE,
 )
 
+APEX_SKILL = "platform-apex-generate"
+SOQL_SKILL = "platform-soql-query"
 
-def detect_skills(messages: list[dict]) -> list[str]:
-    """Return list of skill names relevant to the conversation."""
+
+def detect_skills(messages: list[dict], force: Optional[list[str]] = None) -> list[str]:
+    """
+    Return list of skill names relevant to the conversation.
+    `force` lists skills that are always included (e.g. the Apex Runner forces
+    the Apex skill, since its prompts often contain no Apex keyword).
+    """
     user_texts = [
         m["content"] for m in messages[-6:]
         if m.get("role") == "user" and isinstance(m.get("content"), str)
@@ -146,10 +155,10 @@ def detect_skills(messages: list[dict]) -> list[str]:
     combined = " ".join(user_texts)
 
     skills: list[str] = []
-    if _SOQL_RE.search(combined):
-        skills.append("platform-soql-query")
-    if _APEX_RE.search(combined):
-        skills.append("platform-apex-generate")
+    if SOQL_SKILL in (force or []) or _SOQL_RE.search(combined):
+        skills.append(SOQL_SKILL)
+    if APEX_SKILL in (force or []) or _APEX_RE.search(combined):
+        skills.append(APEX_SKILL)
     return skills
 
 
@@ -496,10 +505,12 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
     )
 
 
-def augment_system(system: Optional[str], messages: list[dict]) -> str:
+def augment_system(system: Optional[str], messages: list[dict],
+                   force_skills: Optional[list[str]] = None) -> str:
     """
     Detect relevant skills from message history and append their context
     to the system prompt. Returns the (possibly unchanged) system string.
+    `force_skills` are included regardless of keyword detection.
     Respects skills_enabled and skills_source config from ~/.avio_config.json.
     """
     cfg = _load_skills_config()
@@ -507,7 +518,7 @@ def augment_system(system: Optional[str], messages: list[dict]) -> str:
     if not cfg.get("enabled", True):
         return system or ""
 
-    skills = detect_skills(messages)
+    skills = detect_skills(messages, force_skills)
     if not skills:
         return system or ""
 

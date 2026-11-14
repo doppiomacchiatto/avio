@@ -164,7 +164,7 @@ Be concise and direct. No need to repeat the question.`;
 
     await apiStream(
       "/api/claude/chat",
-      { messages: newMessages, system: buildSystemPrompt() },
+      { messages: newMessages, system: buildSystemPrompt(), force_skills: ["platform-apex-generate"] },
       // onDelta
       (delta) => {
         fullText += delta;
