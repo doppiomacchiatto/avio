@@ -3,7 +3,7 @@ Persistent "restore snapshot" for the Validation Rules bulk Disable All.
 
 Remembers which rules were active before a bulk disable, so Restore still works
 after switching objects/tabs or restarting the app. Stored as JSON in
-~/.avio_vr_snapshots.json:
+<Avio data dir>/vr_snapshots.json (see platform_env.avio_data_dir):
 
 {
   "version": 1,

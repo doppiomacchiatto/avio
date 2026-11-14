@@ -438,4 +438,35 @@ def avio_data_dir() -> Path:
         base = Path(xdg) if xdg else Path.home() / ".local" / "share"
         d = base / "avio"
     d.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_files(d)
     return d
+
+
+# Files written by the app while it was still called Vendavis, in the home dir.
+_LEGACY_FILES = {
+    ".vendavis_api_key":            "api_key",
+    ".vendavis_config.json":        "config.json",
+    ".vendavis_vr_snapshots.json":  "vr_snapshots.json",
+}
+_MIGRATED = False
+
+
+def _migrate_legacy_files(data_dir: Path) -> None:
+    """
+    One-time, best-effort move of ~/.vendavis_* files into the Avio data dir.
+    Never overwrites: if the Avio dir already has the file, it wins and the old
+    one is left where it is. Never logs file contents.
+    """
+    global _MIGRATED
+    if _MIGRATED:
+        return
+    _MIGRATED = True
+    import shutil
+    for old_name, new_name in _LEGACY_FILES.items():
+        src = Path.home() / old_name
+        dst = data_dir / new_name
+        try:
+            if src.is_file() and not dst.exists():
+                shutil.move(str(src), str(dst))
+        except OSError:
+            pass

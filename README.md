@@ -217,7 +217,7 @@ The AI API key is stored in plain text in this folder, so treat it like a creden
 | `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` | — | AI provider API key (fallback if none is saved in Settings) |
 | `OPENCODE_BASE_URL` | — | AI gateway URL (OpenAI-compatible) |
 | `OPENCODE_MODEL`    | — | Default AI model |
-| `VENDAVIS_DEBUG`    | off | Verbose Salesforce CLI logging (legacy name, will become `AVIO_DEBUG`) |
+| `AVIO_DEBUG`        | off | Verbose Salesforce CLI logging (`VENDAVIS_DEBUG` still works) |
 
 ---
 

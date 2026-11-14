@@ -18,7 +18,8 @@ from platform_env import get_platform
 
 SF_CLI = None   # resolved lazily on first call
 
-DEBUG = os.environ.get("VENDAVIS_DEBUG", "").lower() in ("1", "true", "yes")
+# VENDAVIS_DEBUG is the pre-rename name, still honoured.
+DEBUG = (os.environ.get("AVIO_DEBUG") or os.environ.get("VENDAVIS_DEBUG") or "").lower() in ("1", "true", "yes")
 
 
 def _debug(msg: str) -> None:
