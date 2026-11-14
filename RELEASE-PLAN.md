@@ -78,14 +78,23 @@ Record (non-secret):
 
 ---
 
-## 3. macOS signing and notarization
+## 3. macOS build, then signing and notarization
+
+**Next up (the developer is moving to a Mac).** Build and smoke-test first; the full plan, prerequisites and the risk list from the 2026-11-14 code audit are in `HANDOFF-2026-11-14.md` ("Next: macOS").
+
+- [ ] **Add PyInstaller to the build requirements** (`pyinstaller` is not in `backend/requirements.txt`, so a fresh checkout fails at `npm run build:backend`); update the README "Dev setup"
+- [ ] Build on a Mac (`npm run tauri:build`; Python 3.11/3.12 venv). PyInstaller builds for the host CPU, so one `.dmg` per architecture (arm64 / x86_64)
+- [ ] Smoke test (checklist in the handoff), including: `sf`/`node` found when launched from Finder, no orphan `sf_backend` after quit, native dialogs, About menu
+- [ ] Check the bundled `sf_backend` runs on Apple Silicon unsigned (`codesign -dv`); ad-hoc sign it in the build if the OS kills it
+- [ ] Attach the `.dmg` file(s) to the `v1.0.1-beta` pre-release, add their SHA-256 to the notes, update the README platform table (both branches)
+
+Then, signing and notarization:
 
 - [ ] Apple Developer Program membership (~$99/year)
 - [ ] **Developer ID Application** certificate
 - [ ] `bundle.macOS` in `tauri.conf.json`: `signingIdentity`, `providerShortName`, `entitlements` (details in `TODO.md`)
 - [ ] Notarize (`xcrun notarytool`, or via the Tauri CI action)
-- [ ] Needs a Mac build first; nobody has built this branch on macOS yet (see `HANDOFF-2026-11-14.md`, item 2)
-- Until then: testers right-click → Open.
+- Until signed, testers right-click → Open (or `xattr -dr com.apple.quarantine /Applications/Avio.app`).
 
 ---
 
