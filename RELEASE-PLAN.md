@@ -10,13 +10,13 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 | Area | State |
 |---|---|
 | Release candidate build | Installed locally from `e4570fc`; **manually verified by the developer 2026-11-14, no issues** (the `HANDOFF-2026-11-14.md` checklist). Installer hashes re-checked against the release notes; no app-code difference between the tag and the dev tip |
-| Tag `v1.0.1-beta` | Created 2026-11-14 on `main` merge commit `50e3c4a` (annotated, pushed). No GitHub release published yet. The tagged code was verified by the developer. If code changes before publishing, merge to `main` and move the tag (`git tag -d`, `git push origin :refs/tags/v1.0.1-beta`, re-tag), then rebuild and recompute the hashes |
-| Windows signing | Not started (decided to do later) |
+| Tag `v1.0.1-beta` | Created 2026-11-14 on `main` merge commit `50e3c4a` (annotated, pushed). The tagged code was verified by the developer. If code changes before publishing, merge to `main` and move the tag (`git tag -d`, `git push origin :refs/tags/v1.0.1-beta`, re-tag), then rebuild and recompute the hashes |
+| Windows signing | On hold. Waiting for the developer to sign up for Azure and report back; do not start before then (the repo-side steps need the endpoint/account/profile names) |
 | macOS signing | Not started |
-| Distribution (GitHub Releases) | Not started; no release published |
+| Distribution (GitHub Releases) | **Published 2026-11-14** as a public pre-release with both installers (GitHub's hashes match the notes). Open: the description still says "First Release", so the notes in `RELEASE-NOTES-v1.0.1-beta.md` still need to be pasted in |
 | CI workflow | None (`.github/` only has `FUNDING.yml`) |
 | Docs / wiki | README only; decision below |
-| Funding | GitHub `FUNDING.yml`, README badge, About button done; the project website not done |
+| Funding | Done: GitHub `FUNDING.yml`, README badge, About button. Decided: no Ko-fi link on the project website |
 
 ---
 
@@ -93,13 +93,13 @@ Record (non-secret):
 
 Binaries go on **GitHub Releases**, never in the repo (about 26 MB per build; git would keep every version).
 
-- [ ] **Confirm the repo is public.** Releases from a private repo require a GitHub login to download. If it must stay private, host the installers on the project website instead.
-- [ ] Create the release from the tag `v1.0.1-beta`, tick **pre-release**
-- [ ] Attach `Avio_1.0.1_x64-setup.exe` (main download) and optionally the `.msi`; add `.dmg` / `.AppImage` when those exist
-- [ ] Put **SHA-256 checksums** in the notes (`Get-FileHash .\Avio_1.0.1_x64-setup.exe -Algorithm SHA256`)
+- [x] **Repo is public** (verified via the GitHub API, 2026-11-14), so downloads need no login
+- [x] Release created from the tag `v1.0.1-beta`, marked **pre-release** (2026-11-14)
+- [x] Attached `Avio_1.0.1_x64-setup.exe` and `Avio_1.0.1_x64_en-US.msi`; add `.dmg` / `.AppImage` when those exist
+- [ ] **Paste the release notes into the description** (it currently says "First Release"; edit at `https://github.com/doppiomacchiatto/avio/releases/edit/v1.0.1-beta`). Optionally rename the title `v1.0.1-Beta` to `Avio 1.0.1 Beta`
+- [ ] SHA-256 checksums in the notes (they are in `RELEASE-NOTES-v1.0.1-beta.md`; they arrive with the paste above)
 - [x] Release notes drafted 2026-11-14 in `RELEASE-NOTES-v1.0.1-beta.md` (review, then paste into the release; hashes inside must match the uploaded files). Contents: what's new, requirements (Salesforce CLI `sf`, an authenticated org, optional AI key), and while unsigned: *"Windows may show 'Windows protected your PC'. Click More info → Run anyway."*
 - [x] README Download section added (2026-11-14). It links to `https://github.com/doppiomacchiatto/avio/releases`, **not** `/releases/latest`: GitHub's "latest" skips pre-releases and currently just redirects to the releases list. Once a full (non-pre) release exists, `/releases/latest` can be used for a direct link.
-- [ ] Add the same Releases link on the project website
 
 ### Later: automate with CI
 - [ ] `.github/workflows/release.yml` using `tauri-action` on Windows (and macOS/Linux) runners; trigger on tag `v*`; create a **draft** release and review it before publishing
@@ -127,7 +127,7 @@ Binaries go on **GitHub Releases**, never in the repo (about 26 MB per build; gi
 - [x] `.github/FUNDING.yml` (`ko_fi: doppiomacchiato`), README badge, About → "Support on Ko-fi" (2026-11-14)
 - [ ] Confirm the **ko-fi.com/doppiomacchiato** spelling is intentional (GitHub user is `doppiomacchiatto`, two t's)
 - [ ] Confirm the ❤ Sponsor button appears on the repo page (Settings → General → Features → Sponsorships)
-- [ ] Add a Ko-fi link or button on **the project website** (that site's source is not in this repo); link to `https://ko-fi.com/doppiomacchiato`
+- ~~Ko-fi link on the project website~~: not needed (developer decision, 2026-11-14)
 - [ ] Optional: GitHub Sponsors (apply under Settings → Sponsors) and add `github: doppiomacchiatto` to `FUNDING.yml`
 
 ---
