@@ -377,7 +377,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
       {!sidebarOpen && (
         <button
           onClick={() => setSidebarOpen(true)}
-          className="shrink-0 w-6 flex items-center justify-center border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-700 transition-colors"
+          className="shrink-0 w-6 flex items-center justify-center border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
           title="Expand SObject browser"
         >
           <span className="text-xs rotate-180 writing-mode-vertical">▶</span>
