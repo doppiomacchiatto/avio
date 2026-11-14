@@ -1,29 +1,78 @@
-# Vendavis v1.0.1 Beta — Salesforce Metadata Explorer
+# Avio v1.0.1 Beta — Salesforce Metadata Explorer
 
-Cross-platform desktop app (macOS · Windows · Linux).
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Avio-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/doppiomacchiato)
+
+Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (Rust shell + system WebView), **React**, and a **Python FastAPI** sidecar that drives the Salesforce CLI.
 
 ## Architecture
 
 ```
-sf-metadata-exp-electron/
-├── backend/              # Python FastAPI server (localhost REST)
-│   ├── main.py           # FastAPI app, all routes
-│   ├── sf_cli.py         # Salesforce CLI wrappers (delegates to platform_env)
-│   ├── platform_env.py   # OS-specific PATH & tool-discovery abstraction
-│   ├── excel_builder.py
-│   ├── query_history.py
-│   ├── claude_client.py  # Claude AI client (Anthropic SDK)
-│   └── sf_backend.spec   # PyInstaller spec — build with: pyinstaller sf_backend.spec
-├── src-tauri/
-│   ├── src/main.rs       # Tauri shell — spawns backend binary, creates window
-│   └── tauri.conf.json
-└── frontend/             # React + Vite + Tailwind
-    └── src/
-        ├── App.jsx
-        ├── api/client.js        # fetch wrapper with port injection
-        ├── components/          # OrgPickerModal, TabBar, Spinner, …
-        └── pages/               # FlsExplorer, SoqlRunner, ApexRunner, OrgHealth, ClaudeChat
+┌─────────────────────────────── Avio (one desktop app) ───────────────────────────────┐
+│                                                                                       │
+│  Tauri shell (Rust)  ──spawns──►  FastAPI backend (Python, PyInstaller binary)        │
+│   • native window / menu            • HTTP server on a local port                     │
+│   • native dialogs, file I/O        • runs `sf` CLI + Salesforce REST/Tooling API     │
+│   • picks the backend port          • builds Excel workbooks, talks to the AI provider│
+│        │                                    ▲                       │                 │
+│        ▼  loads                             │ HTTP / SSE            ▼                 │
+│  React UI (WebView) ────────────────────────┘             Salesforce orgs (via sf)    │
+│                                                                                       │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Startup.** In a packaged build the Tauri shell picks a free local port, starts the bundled `sf_backend` binary with `SF_BACKEND_PORT` set, and injects `window.__SF_BACKEND_PORT__` into the page. The UI waits for `/api/health` before loading orgs. In dev (`npm run dev`) the backend is started separately on the fixed port 7891. When the window closes, the shell asks the UI to confirm, then stops the backend and its child processes.
+
+**Requests.** The React UI calls the backend over HTTP on localhost (`frontend/src/api/client.js`); the Content Security Policy only allows `localhost` and `127.0.0.1`. AI chat uses Server-Sent Events (`/api/ai/chat`) for streaming. The shell also exposes Tauri commands (`api_get`, `api_post`) that proxy requests through Rust; the desktop client only supports GET and POST this way, so destructive actions have a POST alias.
+
+**Native features** are Tauri commands and plugins, not backend routes: `write_file`, `path_exists`, `open_file`, `restart_backend`, `confirm_close`, and the dialog plugin (Save / Choose folder). In Tauri v2, `window.__TAURI__` only exists when `withGlobalTauri` is on (it is off), so the frontend uses `isTauri()` from `client.js` or imports `@tauri-apps/*` directly.
+
+**Salesforce access** goes through the Salesforce CLI (`sf`) using the orgs you already authenticated with `sf org login web`. Avio never asks for Salesforce credentials. `platform_env.py` finds `sf` and `node` even when the app is launched with a minimal OS `PATH` (see below).
+
+### Repository layout
+
+```
+avio/
+├── backend/                  # Python FastAPI server (localhost REST)
+│   ├── main.py               # FastAPI app, all routes
+│   ├── sf_cli.py             # Salesforce CLI wrappers (delegates to platform_env)
+│   ├── platform_env.py       # OS-specific PATH, tool discovery, Avio data dir
+│   ├── ai_client.py          # Provider-neutral AI client (OpenAI-compatible APIs)
+│   ├── sf_skills.py          # Salesforce skill context injected into AI prompts
+│   ├── sf_skills/            # Bundled skills (platform-apex-generate, platform-soql-query)
+│   ├── excel_builder.py      # Excel workbook generation (FLS / object access)
+│   ├── query_history.py      # SQLite SOQL history
+│   ├── vr_snapshot.py        # Validation-rule "Disable All" restore snapshots
+│   └── sf_backend.spec       # PyInstaller spec (built via `npm run build:backend`)
+├── src-tauri/                # Tauri v2 shell (Rust)
+│   ├── src/main.rs           # Window, backend lifecycle, Tauri commands
+│   ├── src/platform.rs       # OS-specific process handling (spawn flags, kill tree)
+│   ├── tauri.conf.json       # App config, CSP, bundle resources
+│   ├── tauri.windows.conf.json   # Windows-only: bundles sf_backend.exe
+│   └── capabilities/         # Permissions granted to the WebView (dialog, shell, window)
+├── frontend/                 # React + Vite + Tailwind
+│   └── src/
+│       ├── App.jsx           # Shell UI: tabs, org picker, settings, About
+│       ├── api/client.js     # Backend client, isTauri(), native dialog helpers
+│       ├── apexExport.js     # Pure helpers: Apex → .cls/.trigger + meta.xml
+│       ├── components/       # OrgPickerModal, TabBar, DebugLogModal, Spinner, …
+│       ├── data/             # Static data (Org Health checks)
+│       └── pages/            # FlsExplorer, ProfilesExplorer, SoqlRunner, ApexRunner,
+│                             # RestExplorer, OrgHealth, ClaudeChat
+├── scripts/venv-run.mjs      # Runs tools from backend/.venv on any OS
+├── sf_fls_exporter.py        # Original standalone FLS exporter script
+└── HANDOFF-*.md              # Session handoff notes for developers
+```
+
+### Backend routes (overview)
+
+| Area | Routes |
+|---|---|
+| App & health | `/api/health`, `/api/sf-version`, `/api/shutdown`, `/api/settings`, `/api/open_file` |
+| Orgs & metadata | `/api/orgs`, `…/objects`, `…/fields`, `…/profiles`, `…/permsets`, `…/fls`, `…/limits`, `…/api-version`, `…/security-settings` |
+| Validation rules | `…/validation-rules` (list, toggle, restore snapshot) |
+| Query & execute | `/api/soql`, `/api/soql/history`, `/api/apex`, `…/rest` (REST proxy) |
+| Export | `/api/export`, `/api/export/principal` (Excel workbooks, streamed progress) |
+| AI | `/api/ai/chat` (SSE), `/api/models`, `/api/ai/skills*` (skill sources, fetch, remove) |
 
 ---
 
@@ -31,7 +80,7 @@ sf-metadata-exp-electron/
 
 ### The problem
 
-When Vendavis runs as a packaged `.app` / `.exe` / AppImage, the OS launches it with a minimal `PATH` — only the handful of directories the system considers safe defaults. This omits Homebrew (`/opt/homebrew/bin`), nvm, Volta, npm-global, and all other user-installed tool locations. The Salesforce CLI (`sf`) is a Node.js script, so even if the binary is found, calling it fails immediately if `node` is not on the `PATH`.
+When Avio runs as a packaged `.app` / `.exe` / AppImage, the OS launches it with a minimal `PATH` — only the handful of directories the system considers safe defaults. This omits Homebrew (`/opt/homebrew/bin`), nvm, Volta, npm-global, and all other user-installed tool locations. The Salesforce CLI (`sf`) is a Node.js script, so even if the binary is found, calling it fails immediately if `node` is not on the `PATH`.
 
 A naive fix — hardcoding macOS paths in `sf_cli.py` — would break on Windows and Linux and would require touching multiple files every time a new OS is supported.
 
@@ -142,17 +191,33 @@ npm run build:backend
 
 # Package via Tauri
 npx tauri build
-# → src-tauri/target/release/bundle/dmg/Vendavis_*.dmg  (macOS)
-# → src-tauri/target/release/bundle/msi/Vendavis_*.msi  (Windows)
-# → src-tauri/target/release/bundle/appimage/Vendavis_*.AppImage (Linux)
+# → src-tauri/target/release/bundle/dmg/Avio_*.dmg         (macOS)
+# → src-tauri/target/release/bundle/nsis/Avio_*-setup.exe  (Windows installer)
+# → src-tauri/target/release/bundle/msi/Avio_*.msi         (Windows MSI)
+# → src-tauri/target/release/bundle/appimage/Avio_*.AppImage (Linux)
 ```
+
+`npm run tauri:build` runs the backend and Tauri steps together (the frontend is built by Tauri's `beforeBuildCommand`). The release binaries are not code-signed yet.
+
+## User data
+
+| OS | Location |
+|---|---|
+| Windows | `%APPDATA%\Avio\` (`config.json`, `api_key`, `skills\`, `query_history.db`) |
+| macOS | `~/.avio/` |
+| Linux | `$XDG_DATA_HOME/avio/` (default `~/.local/share/avio/`) |
+
+The AI API key is stored in plain text in this folder, so treat it like a credential.
 
 ## Environment variables
 
 | Variable            | Default | Purpose                        |
 |---------------------|---------|--------------------------------|
-| `SF_BACKEND_PORT`   | 7891    | Port for FastAPI server        |
-| `ANTHROPIC_API_KEY` | —       | Claude API key (or `~/.anthropic_key`) |
+| `SF_BACKEND_PORT`   | 7891 (dev) / free port (packaged) | Port for the FastAPI server |
+| `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` | — | AI provider API key (fallback if none is saved in Settings) |
+| `OPENCODE_BASE_URL` | — | AI gateway URL (OpenAI-compatible) |
+| `OPENCODE_MODEL`    | — | Default AI model |
+| `VENDAVIS_DEBUG`    | off | Verbose Salesforce CLI logging (legacy name, will become `AVIO_DEBUG`) |
 
 ---
 
@@ -164,11 +229,11 @@ The current export flow works well for a single profile or permission set scoped
 
 The correct architecture for that use case is an asynchronous job queue backed by Apex:
 
-**Salesforce side — Queueable Apex job submission.** Vendavis submits an Apex job via the Tooling API or Anonymous Apex that enqueues a `QueueableContext` job. The job runs server-side inside the org, iterates all FieldPermissions and ObjectPermissions for the requested principal, and writes results to a Custom Object (e.g. `VendavisExportJob__c` with fields for status, result payload URL or chunked JSON blobs, error message, and completed timestamp).
+**Salesforce side — Queueable Apex job submission.** Avio submits an Apex job via the Tooling API or Anonymous Apex that enqueues a `QueueableContext` job. The job runs server-side inside the org, iterates all FieldPermissions and ObjectPermissions for the requested principal, and writes results to a Custom Object (e.g. `AvioExportJob__c` with fields for status, result payload URL or chunked JSON blobs, error message, and completed timestamp).
 
-**Callback / polling mechanism.** Because Salesforce cannot push to a local desktop app, Vendavis polls the `VendavisExportJob__c` record on a configurable interval (e.g. every 5 seconds) until status transitions to `Completed` or `Failed`. Alternatively, a Platform Event (`VendavisJobComplete__e`) could be subscribed to via CometD/Streaming API for near-real-time notification, but polling is simpler and sufficient for most orgs.
+**Callback / polling mechanism.** Because Salesforce cannot push to a local desktop app, Avio polls the `AvioExportJob__c` record on a configurable interval (e.g. every 5 seconds) until status transitions to `Completed` or `Failed`. Alternatively, a Platform Event (`AvioJobComplete__e`) could be subscribed to via CometD/Streaming API for near-real-time notification, but polling is simpler and sufficient for most orgs.
 
-**Job Queue UI component.** A dedicated Job Queue panel in Vendavis would show all submitted jobs with columns for principal name, object scope, status (Queued / Running / Done / Failed), elapsed time, and an "Open Workbook" action once done. The panel would persist across tab switches and survive app restarts by storing job IDs in local storage. Users could cancel in-flight jobs by calling `System.abortJob()` via anonymous Apex.
+**Job Queue UI component.** A dedicated Job Queue panel in Avio would show all submitted jobs with columns for principal name, object scope, status (Queued / Running / Done / Failed), elapsed time, and an "Open Workbook" action once done. The panel would persist across tab switches and survive app restarts by storing job IDs in local storage. Users could cancel in-flight jobs by calling `System.abortJob()` via anonymous Apex.
 
 **Why this is deferred.** This approach requires deploying Apex classes and a Custom Object to the target org, which is a non-trivial installation step and may be blocked by org security policies. The current synchronous approach — scoped to a user-selected object list — covers the primary use case (auditing a specific application's objects) without any org-side installation. If full-org export becomes a hard requirement, the async queue approach is the right path.
 
