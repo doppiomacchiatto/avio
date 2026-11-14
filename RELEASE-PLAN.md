@@ -97,7 +97,7 @@ Binaries go on **GitHub Releases**, never in the repo (about 26 MB per build; gi
 - [ ] Create the release from the tag `v1.0.1-beta`, tick **pre-release**
 - [ ] Attach `Avio_1.0.1_x64-setup.exe` (main download) and optionally the `.msi`; add `.dmg` / `.AppImage` when those exist
 - [ ] Put **SHA-256 checksums** in the notes (`Get-FileHash .\Avio_1.0.1_x64-setup.exe -Algorithm SHA256`)
-- [ ] Release notes: what's new, requirements (Salesforce CLI `sf`, an authenticated org, optional AI key), and while unsigned: *"Windows may show 'Windows protected your PC'. Click More info → Run anyway."*
+- [x] Release notes drafted 2026-11-14 in `RELEASE-NOTES-v1.0.1-beta.md` (review, then paste into the release; hashes inside must match the uploaded files). Contents: what's new, requirements (Salesforce CLI `sf`, an authenticated org, optional AI key), and while unsigned: *"Windows may show 'Windows protected your PC'. Click More info → Run anyway."*
 - [ ] Link the stable URL `https://github.com/doppiomacchiatto/avio/releases/latest` from the README (a Download section) and from the project website. It always points at the newest release.
 
 ### Later: automate with CI
