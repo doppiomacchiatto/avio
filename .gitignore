@@ -30,3 +30,6 @@ src-tauri/target/
 *.anthropic_key
 .vendavis_config.json
 .sf_tools_config.json
+
+# Session handoff notes live on the dev branch (opencode/mvp-0), not on main
+HANDOFF*
