@@ -1,5 +1,5 @@
 """
-excel_builder.py — Excel workbook construction for sf_fls_exporter.
+excel_builder.py — Excel workbook construction for Avio's FLS / object access exports.
 
 Requires: openpyxl, lxml (optional, for checkbox injection)
 """

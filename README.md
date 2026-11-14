@@ -58,9 +58,7 @@ avio/
 │       ├── data/             # Static data (Org Health checks)
 │       └── pages/            # FlsExplorer, ProfilesExplorer, SoqlRunner, ApexRunner,
 │                             # RestExplorer, OrgHealth, ClaudeChat
-├── scripts/venv-run.mjs      # Runs tools from backend/.venv on any OS
-├── sf_fls_exporter.py        # Original standalone FLS exporter script
-└── HANDOFF-*.md              # Session handoff notes for developers
+└── scripts/venv-run.mjs      # Runs tools from backend/.venv on any OS
 ```
 
 ### Backend routes (overview)
