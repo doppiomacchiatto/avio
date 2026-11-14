@@ -98,7 +98,8 @@ Binaries go on **GitHub Releases**, never in the repo (about 26 MB per build; gi
 - [ ] Attach `Avio_1.0.1_x64-setup.exe` (main download) and optionally the `.msi`; add `.dmg` / `.AppImage` when those exist
 - [ ] Put **SHA-256 checksums** in the notes (`Get-FileHash .\Avio_1.0.1_x64-setup.exe -Algorithm SHA256`)
 - [x] Release notes drafted 2026-11-14 in `RELEASE-NOTES-v1.0.1-beta.md` (review, then paste into the release; hashes inside must match the uploaded files). Contents: what's new, requirements (Salesforce CLI `sf`, an authenticated org, optional AI key), and while unsigned: *"Windows may show 'Windows protected your PC'. Click More info → Run anyway."*
-- [ ] Link the stable URL `https://github.com/doppiomacchiatto/avio/releases/latest` from the README (a Download section) and from the project website. It always points at the newest release.
+- [x] README Download section added (2026-11-14). It links to `https://github.com/doppiomacchiatto/avio/releases`, **not** `/releases/latest`: GitHub's "latest" skips pre-releases and currently just redirects to the releases list. Once a full (non-pre) release exists, `/releases/latest` can be used for a direct link.
+- [ ] Add the same Releases link on the project website
 
 ### Later: automate with CI
 - [ ] `.github/workflows/release.yml` using `tauri-action` on Windows (and macOS/Linux) runners; trigger on tag `v*`; create a **draft** release and review it before publishing
