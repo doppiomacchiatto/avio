@@ -15,11 +15,15 @@ if (!tool) {
   process.exit(2);
 }
 
-const exe = join(backend, ".venv", win ? "Scripts" : "bin", win ? `${tool}.exe` : tool);
+// Run as `python -m <module>` instead of the tool's own launcher (Scripts\pyinstaller.exe etc.):
+// those launchers embed the absolute venv path and fail silently once the project folder is
+// moved or renamed (it was renamed vendavis -> avio).
+const MODULES = { pyinstaller: "PyInstaller" };
+const exe = join(backend, ".venv", win ? "Scripts" : "bin", win ? "python.exe" : "python");
 if (!existsSync(exe)) {
   console.error(`Not found: ${exe}\nCreate the venv first: cd backend && python -m venv .venv && pip install -r requirements.txt`);
   process.exit(1);
 }
 
-const child = spawn(exe, args, { cwd: backend, stdio: "inherit" });
+const child = spawn(exe, ["-m", MODULES[tool] || tool, ...args], { cwd: backend, stdio: "inherit" });
 child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
