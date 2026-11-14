@@ -4,6 +4,25 @@
 
 Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (Rust shell + system WebView), **React**, and a **Python FastAPI** sidecar that drives the Salesforce CLI.
 
+## Download
+
+**[⬇ Download the latest release](https://github.com/doppiomacchiatto/avio/releases/latest)**: pick `Avio_<version>_x64-setup.exe` (an `.msi` is also attached).
+
+| Platform | Status |
+|---|---|
+| Windows 10/11 (x64) | Installer on the Releases page |
+| macOS, Linux | No published builds yet; [build from source](#dev-setup-first-time) |
+
+**You need** the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) (`npm install -g @salesforce/cli`) and at least one authenticated org (`sf org login web --alias myorg`). An AI provider API key is optional and only used by the AI features (⚙ Settings).
+
+**Not code-signed yet.** Windows SmartScreen may show "Windows protected your PC": click **More info → Run anyway**. Each release lists the SHA-256 of its installers; to check yours:
+
+```powershell
+Get-FileHash .\Avio_1.0.1_x64-setup.exe -Algorithm SHA256
+```
+
+Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically on first run.
+
 ## Architecture
 
 ```
