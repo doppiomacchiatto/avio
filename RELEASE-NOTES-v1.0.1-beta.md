@@ -1,7 +1,7 @@
 <!--
 DRAFT. Paste everything below the "---" line into the GitHub release body.
 BEFORE PUBLISHING (delete this comment):
-  [ ] Manual verification of the installed build is done (HANDOFF-2026-11-14.md checklist)
+  [x] Manual verification of the installed build is done (developer, 2026-11-14, no issues)
   [ ] Upload EXACTLY the files whose SHA-256 values are listed below. If you rebuild, recompute them:
         Get-FileHash .\Avio_1.0.1_x64-setup.exe -Algorithm SHA256
   [ ] Tag v1.0.1-beta points at main 50e3c4a (move it if you changed code after tagging)
