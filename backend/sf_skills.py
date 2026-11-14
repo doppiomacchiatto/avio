@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import json
+import time
 import logging
 from pathlib import Path
 from typing import Optional
@@ -71,10 +72,13 @@ def _load_skills_config() -> dict:
                 "path":          raw.get("skills_path",    None),
                 "url":           raw.get("skills_url",     None),
                 "custom_skills": raw.get("custom_skills",  []),
+                # "relevant" (default) or "all": which added skills get injected
+                "inject":        raw.get("skills_inject",  "relevant"),
             }
     except Exception as e:
         log.debug("sf_skills: could not read config — %s", e)
-    return {"enabled": True, "source": "bundled", "path": None, "url": None, "custom_skills": []}
+    return {"enabled": True, "source": "bundled", "path": None, "url": None,
+            "custom_skills": [], "inject": "relevant"}
 
 
 def _resolve_skills_root(cfg: dict) -> Optional[Path]:
@@ -142,17 +146,21 @@ APEX_SKILL = "platform-apex-generate"
 SOQL_SKILL = "platform-soql-query"
 
 
+def _recent_user_text(messages: list[dict]) -> str:
+    """Text of the last few user messages (skills are matched against user text only)."""
+    return " ".join(
+        m["content"] for m in messages[-6:]
+        if m.get("role") == "user" and isinstance(m.get("content"), str)
+    )
+
+
 def detect_skills(messages: list[dict], force: Optional[list[str]] = None) -> list[str]:
     """
     Return list of skill names relevant to the conversation.
     `force` lists skills that are always included (e.g. the Apex Runner forces
     the Apex skill, since its prompts often contain no Apex keyword).
     """
-    user_texts = [
-        m["content"] for m in messages[-6:]
-        if m.get("role") == "user" and isinstance(m.get("content"), str)
-    ]
-    combined = " ".join(user_texts)
+    combined = _recent_user_text(messages)
 
     skills: list[str] = []
     if SOQL_SKILL in (force or []) or _SOQL_RE.search(combined):
@@ -180,22 +188,90 @@ def _load_file_local(root: Path, rel_path: str) -> Optional[str]:
         return None
 
 
-def _load_file_url(base_url: str, rel_path: str) -> Optional[str]:
+# In-memory cache for HTTP skill files (github / url sources). Without it every chat
+# message re-downloaded every file. Failures are cached briefly so a missing file or an
+# unreachable host does not cost a timeout on every message.
+_URL_CACHE: dict[str, tuple[float, Optional[str]]] = {}
+_URL_TTL_OK   = 3600.0
+_URL_TTL_FAIL = 300.0
+
+
+def clear_url_cache() -> None:
+    _URL_CACHE.clear()
+
+
+def _load_file_url(base_url: str, rel_path: str, use_cache: bool = True) -> Optional[str]:
     """
-    Fetch a skill file from an internal HTTP server.
+    Fetch a skill file from an HTTP server (GitHub raw or an internal mirror).
     base_url should be the root of an sf-skills mirror, e.g.:
       https://skills.internal.corp/sf-skills
+    Results are cached (see _URL_CACHE). use_cache=False forces a fresh download
+    and refreshes the cache (used when the user explicitly adds a skill).
     """
     import urllib.request
+    import urllib.error
     url = base_url.rstrip("/") + "/" + rel_path
+    now = time.monotonic()
+    if use_cache:
+        hit = _URL_CACHE.get(url)
+        if hit and now < hit[0]:
+            return hit[1]
+
+    content: Optional[str] = None
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             content = resp.read().decode("utf-8")
             content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()
-            return content
+    except urllib.error.HTTPError as e:
+        # Optional reference files are probed by name, so a 404 is expected.
+        (log.debug if e.code == 404 else log.warning)("sf_skills: HTTP %s for %s", e.code, url)
     except Exception as e:
         log.warning("sf_skills: HTTP fetch failed %s — %s", url, e)
-        return None
+
+    _URL_CACHE[url] = (now + (_URL_TTL_OK if content else _URL_TTL_FAIL), content)
+    return content
+
+
+# Reference files that skills commonly ship; probed by name when SKILL.md does not link them.
+_FALLBACK_REFS = [
+    "references/anti-patterns.md",
+    "references/query-optimization.md",
+    "references/soql-reference.md",
+    "references/best-practices.md",
+    "references/patterns.md",
+    "references/reference.md",
+    "references/guidelines.md",
+    "references/examples.md",
+]
+_MAX_DISCOVERED_REFS = 40
+_MD_LINK_RE = re.compile(r"\]\(\s*<?([^)\s>#]+\.md)(?:#[^)\s]*)?>?\s*\)", re.IGNORECASE)
+_MD_BARE_RE = re.compile(
+    r"(?<![\w/.\\-])((?:references|resources|docs|templates|examples|assets)/[\w./-]+\.md)",
+    re.IGNORECASE,
+)
+
+
+def _candidate_ref_paths(skill_md: Optional[str]) -> list[str]:
+    """
+    Relative .md paths to download next to SKILL.md: every file SKILL.md links to
+    (e.g. `[...](references/foo.md)`), then the common fallback names.
+    Only plain relative paths are accepted (no URLs, absolute paths, or `..`).
+    """
+    found: list[str] = []
+    if skill_md:
+        for raw in _MD_LINK_RE.findall(skill_md) + _MD_BARE_RE.findall(skill_md):
+            p = raw.strip()
+            if "\\" in p or p.startswith(("/", "#")) or re.match(r"^[a-z][a-z0-9+.-]*:", p, re.IGNORECASE):
+                continue
+            parts = [s for s in p.split("/") if s not in ("", ".")]
+            if not parts or ".." in parts:
+                continue
+            p = "/".join(parts)
+            if p.lower() != "skill.md" and p not in found:
+                found.append(p)
+            if len(found) >= _MAX_DISCOVERED_REFS:
+                break
+    return found + [p for p in _FALLBACK_REFS if p not in found]
 
 
 # ---------------------------------------------------------------------------
@@ -224,15 +300,10 @@ def _load_custom_skill_context(entry: dict) -> Optional[str]:
     # ── HTTP(S) source ────────────────────────────────────────────────────────
     if raw_path.startswith("http://") or raw_path.startswith("https://"):
         base_url = raw_path.rstrip("/")
-        # Always fetch SKILL.md; also try common reference files
-        candidate_paths = ["SKILL.md"]
-        # Probe for a references/ directory by trying known filenames
-        for ref in ["anti-patterns.md", "query-optimization.md", "soql-reference.md",
-                    "best-practices.md", "patterns.md", "reference.md", "guidelines.md"]:
-            candidate_paths.append(f"references/{ref}")
-
-        parts = []
-        for rel in candidate_paths:
+        # SKILL.md first, then the reference files it links to (plus common names)
+        skill_md = _load_file_url(base_url, "SKILL.md")
+        parts = [skill_md] if skill_md else []
+        for rel in _candidate_ref_paths(skill_md):
             content = _load_file_url(base_url, rel)
             if content:
                 parts.append(content)
@@ -382,41 +453,72 @@ def _fetch_skill_impl(name: str, source: str) -> dict:
 
 def _fetch_skill_from_url(base_url: str, dest: Path) -> int:
     """
-    Fetch SKILL.md and known reference files from a raw HTTP base URL into dest/.
-    Returns number of files written.
+    Fetch SKILL.md, every .md file it links to, and known reference file names
+    from a raw HTTP base URL into dest/. Always downloads fresh (bypasses the
+    cache). Returns number of files written.
     """
-    import datetime
-    candidates = [
-        "SKILL.md",
-        "references/anti-patterns.md",
-        "references/query-optimization.md",
-        "references/soql-reference.md",
-        "references/best-practices.md",
-        "references/patterns.md",
-        "references/reference.md",
-        "references/guidelines.md",
-        "references/examples.md",
-    ]
     written = 0
-    for rel in candidates:
-        content = _load_file_url(base_url, rel)
+
+    def _save(rel: str, content: str) -> None:
+        nonlocal written
+        out = dest / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(content, encoding="utf-8")
+        written += 1
+
+    skill_md = _load_file_url(base_url, "SKILL.md", use_cache=False)
+    if skill_md:
+        _save("SKILL.md", skill_md)
+    for rel in _candidate_ref_paths(skill_md):
+        content = _load_file_url(base_url, rel, use_cache=False)
         if content:
-            out = dest / rel
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(content, encoding="utf-8")
-            written += 1
+            _save(rel, content)
     return written
 
 
-def _build_user_skills_context() -> str:
+# Added skills are only injected when they look relevant to the conversation, and the
+# total is capped: injecting all of them cost ~80 KB (about 20k tokens) per message.
+MAX_USER_SKILL_CHARS = 60_000
+
+# Words in a skill's name that say nothing about its topic.
+_NAME_STOPWORDS = {
+    "platform", "generate", "create", "build", "skill", "skills", "salesforce", "sf",
+    "best", "practice", "practices", "guide", "guidelines", "reference", "the", "and", "for",
+}
+
+
+def _skill_stems(*names: str) -> list[str]:
+    """Topic stems from a skill's folder/display names: 'platform-apex-test-generate' -> ['apex', 'test']."""
+    stems: list[str] = []
+    for name in names:
+        for tok in re.split(r"[^a-z0-9]+", (name or "").lower()):
+            if len(tok) < 3 or tok in _NAME_STOPWORDS:
+                continue
+            stem = tok[:4] if len(tok) > 4 else tok   # 'testing' -> 'test', 'agentforce' -> 'agen'
+            if stem not in stems:
+                stems.append(stem)
+    return stems
+
+
+def _skill_score(stems: list[str], text: str) -> int:
+    return sum(1 for s in stems if re.search(r"\b" + re.escape(s), text))
+
+
+def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
     """
-    Build context block for all skills in ~/.avio_skills/.
-    These are skills downloaded/imported by the user via Add Skill.
-    Returns '' if none exist.
+    Build the context block for skills in the user skills dir (added via Add Skill).
+
+    mode "relevant" (default): include a skill only if a topic word from its name
+    appears in `text` (the recent conversation, plus 'apex'/'soql' when those built-in
+    skills were detected). A skill whose name has no topic words is always included.
+    Best matches first, stopping at MAX_USER_SKILL_CHARS.
+    mode "all": include every added skill (still capped).
+    Returns '' if nothing qualifies.
     """
     if not USER_SKILLS.is_dir():
         return ""
-    sections = []
+    text = (text or "").lower()
+    candidates: list[tuple[int, str, str]] = []   # (score, display, section)
     for skill_dir in sorted(USER_SKILLS.iterdir()):
         if not skill_dir.is_dir():
             continue
@@ -429,6 +531,13 @@ def _build_user_skills_context() -> str:
                 display = meta.get("name") or display
             except Exception:
                 pass
+
+        # Decide relevance before reading any files
+        stems = _skill_stems(skill_dir.name, display)
+        score = _skill_score(stems, text)
+        if mode != "all" and stems and score == 0:
+            continue
+
         parts = []
         skill_md = skill_dir / "SKILL.md"
         if skill_md.exists():
@@ -446,10 +555,27 @@ def _build_user_skills_context() -> str:
             except Exception:
                 pass
         if parts:
-            sections.append(f"## {display}\n\n" + "\n\n---\n\n".join(parts))
+            candidates.append((score, display, f"## {display}\n\n" + "\n\n---\n\n".join(parts)))
 
-    if not sections:
+    if not candidates:
         return ""
+
+    # Best matches first; stop adding once the budget is used up
+    candidates.sort(key=lambda c: (-c[0], c[1].lower()))
+    sections: list[str] = []
+    used = 0
+    skipped: list[str] = []
+    for _score, display, section in candidates:
+        if used + len(section) > MAX_USER_SKILL_CHARS:
+            if sections:
+                skipped.append(display)
+                continue
+            section = section[:MAX_USER_SKILL_CHARS] + "\n\n[... skill truncated ...]"
+        sections.append(section)
+        used += len(section)
+    if skipped:
+        log.warning("sf_skills: skipped added skills over the %d-char budget: %s", MAX_USER_SKILL_CHARS, skipped)
+
     return (
         "\n\n"
         "=== ADDITIONAL SKILL REFERENCE ===\n"
@@ -519,22 +645,20 @@ def augment_system(system: Optional[str], messages: list[dict],
         return system or ""
 
     skills = detect_skills(messages, force_skills)
-    if not skills:
-        return system or ""
+    extra = build_skill_context(skills, cfg) if skills else ""
+    if extra:
+        log.info("sf_skills: injecting skills %s (source=%s)", skills, cfg.get("source"))
 
-    skill_ctx = build_skill_context(skills, cfg)
-    if not skill_ctx:
-        return system or ""
-
-    log.info("sf_skills: injecting skills %s (source=%s)", skills, cfg.get("source"))
-    result = (system or "") + skill_ctx
-
-    # Also inject any user-downloaded skills from ~/.avio_skills/
-    user_ctx = _build_user_skills_context()
+    # Skills the user added: only the ones relevant to this conversation. The built-in
+    # topics count as words in the conversation, so an added 'apex-test' skill is picked
+    # up in the Apex Runner even when the prompt never says "apex".
+    hints = (" apex" if APEX_SKILL in skills else "") + (" soql" if SOQL_SKILL in skills else "")
+    user_ctx = _build_user_skills_context(_recent_user_text(messages) + hints, cfg.get("inject", "relevant"))
     if user_ctx:
-        result += user_ctx
+        log.info("sf_skills: injecting added skills (%d chars)", len(user_ctx))
+        extra += user_ctx
 
-    return result
+    return (system or "") + extra if extra else (system or "")
 
 
 # ---------------------------------------------------------------------------

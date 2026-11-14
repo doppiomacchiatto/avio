@@ -209,6 +209,14 @@ npx tauri build
 
 The AI API key is stored in plain text in this folder, so treat it like a credential.
 
+## AI skills
+
+AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](https://github.com/forcedotcom/sf-skills) (`backend/sf_skills.py`).
+
+- **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill.
+- **Added skills** (Settings → Skills → Add) are added only when a topic word from the skill's name appears in the conversation (`platform-apex-test-generate` matches "apex" and "test"; the Apex Runner counts as "apex"). Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
+- **Downloads** fetch `SKILL.md` plus every `.md` file it links to. GitHub / URL sources are cached in memory for an hour.
+
 ## Environment variables
 
 | Variable            | Default | Purpose                        |
