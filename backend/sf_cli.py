@@ -1,5 +1,5 @@
 """
-sf_cli.py — Salesforce CLI wrappers for sf_fls_exporter.
+sf_cli.py — Salesforce CLI wrappers.
 
 All functions here are pure (no UI), thread-safe, and importable independently.
 """

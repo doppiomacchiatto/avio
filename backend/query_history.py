@@ -1,5 +1,5 @@
 """
-query_history.py — SQLite-backed SOQL query history for sf_fls_exporter.
+query_history.py — SQLite-backed SOQL query history.
 """
 
 import sqlite3
