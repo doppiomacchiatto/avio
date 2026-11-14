@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { apexFileFor, buildExportFiles, metaXml, joinPath, baseName } from "../apexExport";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
+import { debugLog } from "../debugLog";
 
 const PLACEHOLDER = `// Anonymous Apex
 System.debug('Hello from ' + UserInfo.getName());`;
@@ -68,11 +69,18 @@ function AiPanel({ code, lastLog, onInsert, onClose, apiVersion }) {
   async function saveOne(code) {
     const f = apexFileFor(code);
     if (!f) return;
-    const path = await openSaveDialog({
-      title: "Save Apex source",
-      defaultPath: f.fileName,
-      filters: [{ name: f.kind === "trigger" ? "Apex Trigger" : "Apex Class", extensions: [f.ext] }],
-    });
+    let path;
+    try {
+      path = await openSaveDialog({
+        title: "Save Apex source",
+        defaultPath: f.fileName,
+        filters: [{ name: f.kind === "trigger" ? "Apex Trigger" : "Apex Class", extensions: [f.ext] }],
+      });
+    } catch (e) {
+      debugLog(`Save dialog failed: ${e?.message || e}`, "error");
+      flash({ ok: false, text: `Could not open the Save dialog: ${e?.message || e}` });
+      return;
+    }
     if (!path) return; // cancelled
     try {
       await invoke("write_file", { path, content: code.trimEnd() + "\n" });
@@ -98,15 +106,27 @@ function AiPanel({ code, lastLog, onInsert, onClose, apiVersion }) {
   async function saveAll(codes) {
     const files = buildExportFiles(codes, version);
     if (files.length === 0) return;
-    const dir = await openDirDialog();
+    let dir;
+    try {
+      dir = await openDirDialog();
+    } catch (e) {
+      debugLog(`Folder dialog failed: ${e?.message || e}`, "error");
+      flash({ ok: false, text: `Could not open the folder dialog: ${e?.message || e}` });
+      return;
+    }
     if (!dir || dir === "__default__") return; // cancelled
     const entries = files.flatMap((f) => [
       { name: f.fileName,     content: f.content },
       { name: f.metaFileName, content: f.meta    },
     ]);
     const existing = [];
-    for (const e of entries) {
-      if (await invoke("path_exists", { path: joinPath(dir, e.name) })) existing.push(e.name);
+    try {
+      for (const e of entries) {
+        if (await invoke("path_exists", { path: joinPath(dir, e.name) })) existing.push(e.name);
+      }
+    } catch (e) {
+      flash({ ok: false, text: `Could not check the folder: ${e}` });
+      return;
     }
     if (existing.length > 0) { setOverwrite({ dir, entries, existing }); return; }
     await writeEntries(dir, entries);

@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { api } from "../api/client";
+import { api, isTauri } from "../api/client";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
@@ -237,7 +237,8 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
       log(`Directory picker failed: ${e.message}`, "error");
       return;
     }
-    const outputDir = (!dir || dir === "__default__") ? null : dir;
+    if (!dir) return; // picker cancelled
+    const outputDir = dir === "__default__" ? null : dir;
     setExporting(true);
     log(`Exporting ${exportSel.length} object(s): ${exportSel.join(", ")}…`);
     log(`Output directory: ${outputDir || "~/Downloads (default)"}`);
@@ -268,7 +269,7 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
   async function openFile(filePath) {
     log(`Opening: ${filePath}`);
     try {
-      if (window.__TAURI__) {
+      if (isTauri()) {
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke("open_file", { path: filePath });
       } else {

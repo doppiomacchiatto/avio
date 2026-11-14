@@ -10,7 +10,7 @@ import OrgHealth from "./pages/OrgHealth";
 import RestExplorer from "./pages/RestExplorer";
 import DebugLogModal from "./components/DebugLogModal";
 import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
-import { api, waitForBackend } from "./api/client";
+import { api, waitForBackend, isTauri } from "./api/client";
 import { debugLog, useDebugLog } from "./debugLog";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -98,7 +98,7 @@ export default function App() {
   // ── App version (read from Tauri at startup) ───────────────────────────────
   const [appVersion, setAppVersion] = useState("1.0.1");
   useEffect(() => {
-    if (window.__TAURI__) {
+    if (isTauri()) {
       import("@tauri-apps/api/app").then(({ getVersion }) =>
         getVersion().then(setAppVersion).catch(() => {})
       ).catch(() => {});

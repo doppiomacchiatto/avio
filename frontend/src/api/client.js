@@ -154,8 +154,16 @@ export async function apiStream(path, body, onDelta, onDone, onError) {
   onDone();
 }
 
+// window.__TAURI__ only exists when app.withGlobalTauri is true (it is not), so
+// check __TAURI_INTERNALS__, which Tauri v2 always injects.
+export function isTauri() {
+  return typeof window !== "undefined" && !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+}
+
+// Resolves to the chosen folder, or null if the user cancelled. Throws if the
+// native dialog is unavailable or fails, so callers can show an error.
 export async function openDirDialog() {
-  if (window.__TAURI__) {
+  if (isTauri()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const result = await open({ directory: true });
     return result || null;
@@ -166,10 +174,10 @@ export async function openDirDialog() {
   return path.trim() || "__default__";    // blank → default
 }
 
+// Resolves to the chosen path, or null if the user cancelled. Throws if the
+// native dialog is unavailable or fails (never returns null for that).
 export async function openSaveDialog(opts = {}) {
-  if (window.__TAURI__) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    return save(opts);
-  }
-  return null;
+  if (!isTauri()) throw new Error("The native Save dialog is only available in the desktop app.");
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  return (await save(opts)) || null;
 }

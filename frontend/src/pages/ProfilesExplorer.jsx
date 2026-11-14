@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { api } from "../api/client";
+import { api, isTauri } from "../api/client";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
@@ -145,7 +145,8 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
       log(`Directory picker failed: ${e.message}`, "error");
       return;
     }
-    const outputDir = (!dir || dir === "__default__") ? null : dir;
+    if (!dir) return; // picker cancelled
+    const outputDir = dir === "__default__" ? null : dir;
     setExporting(true);
     setExportStatus("Starting export…");
     const objList = [...checkedObjs];
@@ -216,7 +217,7 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
   }
 
   async function openFile(filePath) {
-    if (window.__TAURI__) {
+    if (isTauri()) {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("open_file", { path: filePath }).catch(() => {});
     }
