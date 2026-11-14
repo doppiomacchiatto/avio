@@ -10,7 +10,7 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 | Area | State |
 |---|---|
 | Release candidate build | Installed locally from `e4570fc`; manual verification pending (see `HANDOFF-2026-11-14.md`) |
-| Tag `v1.0.1-beta` | Not created |
+| Tag `v1.0.1-beta` | Created 2026-11-14 on `main` merge commit `50e3c4a` (annotated, pushed). No GitHub release published yet. Created before manual verification finished; if a check fails, fix on dev, merge, and move the tag (`git tag -d`, `git push origin :refs/tags/v1.0.1-beta`, re-tag) before publishing a release |
 | Windows signing | Not started (decided to do later) |
 | macOS signing | Not started |
 | Distribution (GitHub Releases) | Not started; no release published |
@@ -24,7 +24,7 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 
 - [ ] Run the verification checklist in `HANDOFF-2026-11-14.md` against the installed build (Save, skills, folder pickers, Ko-fi, dark mode)
 - [ ] Fix anything that fails, rebuild, re-verify
-- [ ] Tag `main`: `git tag v1.0.1-beta <main tip>` then `git push origin v1.0.1-beta`
+- [x] Tag `main` (2026-11-14): `v1.0.1-beta` on `50e3c4a`, the merge of dev `e4570fc`+docs into `main` (handoffs excluded). App code is identical to the build that was installed for testing.
 - [ ] Decide the artifact names. Tauri produces `Avio_1.0.1_x64-setup.exe` (NSIS, the main download) and `Avio_1.0.1_x64_en-US.msi`
 
 ---
