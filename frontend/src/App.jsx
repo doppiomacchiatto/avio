@@ -97,7 +97,7 @@ export default function App() {
   }
 
   // ── App version (read from Tauri at startup) ───────────────────────────────
-  const [appVersion, setAppVersion] = useState("1.0.1");
+  const [appVersion, setAppVersion] = useState("1.0.2");
   useEffect(() => {
     if (isTauri()) {
       import("@tauri-apps/api/app").then(({ getVersion }) =>
