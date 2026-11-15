@@ -45,7 +45,7 @@ You need a key from the provider's **API** console. A chat subscription is not a
 |---|---|---|---|
 | **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | `sk-…` | Needs prepaid credit (minimum $5) under [Billing](https://platform.openai.com/settings/organization/billing/). ChatGPT Plus does not include API access. |
 | **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) → API keys | `sk-ant-…` | A Claude Code login or a Claude Pro/Max subscription cannot be used; you need an API key with credit on the Console. |
-| **OpenCode gateway** | [opencode.ai/auth](https://opencode.ai/auth) | `oc_sk_…` | Add credits first. The gateway's free models only work inside OpenCode itself, not from other apps. |
+| **OpenCode gateway** | [opencode.ai/auth](https://opencode.ai/auth) | `oc_sk_…` | Add credits first. The gateway's free models only work inside OpenCode itself, not from other apps. Its model list is public, so it appears as soon as you pick this provider, before you enter a key. It lists Gemini models but no Gemma. |
 | **Google (Gemini)** | Google AI Studio | `AIza…` | |
 | **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | `sk-or-…` | |
 | **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | `gsk_…` | |
@@ -63,6 +63,8 @@ OpenAI, Anthropic and Ollama have been tested end to end. The other providers us
 5. Paste your key into **API Key**. When you click out of the field, Avio loads the provider's real model list.
 6. Choose a **Model** (click **↻ Refresh list** to reload it).
 7. Click **Save**.
+
+If the model you want is not in the list (a brand-new model, or one the provider doesn't advertise), choose **✎ Other: type a model id…** at the bottom of the **Model** list and type its exact id. Avio can't check it until you use it, so a wrong id shows up as a "model not found" error in the panel.
 
 The first connection you save becomes the default (marked ★). The key goes straight into your system keystore and is never shown again; afterwards you only see "key saved" and its last four characters.
 
@@ -85,6 +87,14 @@ Add a second connection with a different name, for example `OpenAI personal` and
 - Once you have **two or more connections**, the **Apex Runner**, **SOQL Runner** and **AI Chat** each show a small dropdown in their AI header. Pick a connection there to use it for that panel. The choice is remembered per panel, so you can use OpenAI in the Apex Runner and Claude in AI Chat at the same time.
 - A connection without a saved key is labelled "— no key" in the dropdown.
 - If you delete the connection a panel was using, that panel falls back to the default.
+
+---
+
+## See which skills a reply used
+
+Avio adds Salesforce guidance ("skills") to the request, depending on the panel and your prompt. Under each AI reply, a **🧠 Skills used** line lists what was actually added, for example `Apex Generate, Apex Test Generate`, or `none`. It comes from Avio's backend, so it is reliable. A model's own answer to "is the skill loaded?" is not: it can only guess. In local mode, built-in skills are labelled `(condensed)`.
+
+The Apex Runner always adds the Apex skill and the SOQL Runner always adds the SOQL skill. Skills you added yourself load only when their topic matches your prompt; see the README's "AI skills" section.
 
 ---
 
@@ -177,7 +187,7 @@ How overrides combine: a panel with a specific connection chosen **ignores** ove
 | **"No model is chosen for connection 'X'"** | Pick a model in Settings and Save. |
 | **401 / "Incorrect API key"** from the provider | The key is wrong, expired or belongs to another provider. Paste the right key. |
 | **429 "You have no credits remaining"** (OpenAI) or a similar billing error | The account has no credit. Add credit in the provider's billing page; a ChatGPT subscription doesn't cover the API. |
-| **404 "model … not found"** | That model isn't available to your key. Click **↻ Refresh list** and choose one from it. |
+| **404 "model … not found"** | That model isn't available to your key, or the id you typed under "Other" is misspelled. Click **↻ Refresh list** and choose one from it. |
 | **"Couldn't fetch models — showing built-in list"** | The provider rejected the key or URL, or it is unreachable. The list shown is a built-in fallback for that provider; fix the key or URL and refresh. |
 | **"The selected connection no longer exists"** | It was deleted. Choose another in the panel dropdown, or add it again. |
 | **Every request fails with "Unauthorized" (in the 🐞 Debug log)** | The page doesn't have the current per-launch token. Quit and relaunch Avio; if it keeps happening, please report it. |

@@ -249,10 +249,12 @@ Under **⚙ Settings → AI Model**, each **AI connection** is one saved provide
 
 AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](https://github.com/forcedotcom/sf-skills) (`backend/sf_skills.py`).
 
-- **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill.
-- **Added skills** (Settings → Skills → Add) are added only when a topic word from the skill's name appears in the conversation (`platform-apex-test-generate` matches "apex" and "test"; the Apex Runner counts as "apex"). Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
+- **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill and the SOQL Runner always includes the SOQL skill.
+- **Added skills** (Settings → Skills → Add) are added only when a specific topic word from the skill's name appears in the conversation (`apex-test-generate` loads for "test", `apex-debug-logs` for "debug" or "logs"). The generic words `apex`, `soql` and `sosl` do not count when a skill has a more specific word, so a test-class prompt does not pull in the debug-log skill; a skill named only with such a word (`apex-guide`) loads in that panel. Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
 - **Downloads** fetch `SKILL.md` plus every `.md` file it links to. GitHub / URL sources are cached in memory for an hour.
 - **Local models (Ollama, LM Studio)** usually run with a ~4K-token context, and Ollama silently drops the middle of a longer prompt. So for a local Gateway URL Avio sends a condensed skill summary (about 6,000 characters of each skill's rules, ~1.5K tokens) instead of the full text. Set `"skills_local_budget"` in `config.json` to change it (`0` = no skills for local models, `-1` = send everything, for models run with a large context). The first request to a local model can take a minute or two while it loads.
+
+- **See what was used.** Under every AI reply, a **"Skills used"** line lists the skills Avio actually added to that request (for example "Apex Generate, Apex Test Generate", or "none"). It comes from the backend, not from the model, so there is no need to ask the model whether a skill was loaded; it can't know.
 
 ### Reply length
 
