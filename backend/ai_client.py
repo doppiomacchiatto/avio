@@ -18,6 +18,7 @@ Optional config.json keys: "max_tokens" (reply limit), "skills_inject",
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -142,9 +143,8 @@ def _load_api_key() -> str:
     if key:
         return key
     raise RuntimeError(
-        "No AI API key found. Set OPENCODE_API_KEY env var, "
-        "add it to opencode.config.json, write it to ~/.avio_api_key, "
-        "or open ⚙ Settings."
+        "No API key is configured. Open ⚙ Settings, add an AI connection and paste your key "
+        "(or set the OPENCODE_API_KEY environment variable)."
     )
 
 
@@ -183,6 +183,51 @@ def _load_model() -> str:
         return model.strip()
     cfg = _load_avio_config()
     return cfg.get("model", "").strip() or DEFAULT_MODEL
+
+
+@dataclass(frozen=True)
+class Resolved:
+    """Everything needed to talk to one provider: a saved connection (see connections.py)
+    or the legacy single-key configuration."""
+    base_url: str
+    model: str
+    api_key: str
+    conn_id: Optional[str] = None
+    label: str = ""
+
+    @property
+    def local(self) -> bool:
+        return _is_local(self.base_url)
+
+
+def dev_overrides() -> dict:
+    """Fields set by opencode.config.json (first) or an OPENCODE_* environment variable:
+    any of api_key, base_url, model. These developer overrides apply on top of the default
+    connection, as they always beat Settings; an explicitly chosen connection ignores them."""
+    oc = _load_opencode_config()
+    out = {}
+    for field, env in (("api_key", "OPENCODE_API_KEY"), ("base_url", "OPENCODE_BASE_URL"), ("model", "OPENCODE_MODEL")):
+        value = (oc.get(field) or "").strip() or os.environ.get(env, "").strip()
+        if value:
+            out[field] = value
+    return out
+
+
+def has_dev_override() -> bool:
+    return bool(dev_overrides())
+
+
+def resolve_legacy() -> Resolved:
+    """Provider settings from the pre-connections sources (override file, env vars,
+    config.json, legacy dotfiles). Raises RuntimeError with a helpful message if no key."""
+    url = _load_base_url()
+    try:
+        key = _load_api_key()
+    except RuntimeError:
+        if not _is_local(url):
+            raise                 # a cloud provider needs a key
+        key = ""                  # Ollama / LM Studio run without one
+    return Resolved(base_url=url, model=_load_model(), api_key=key)
 
 
 # Presets shown in Settings. Every one speaks the OpenAI-compatible API
@@ -279,15 +324,20 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
 
 class AIClient:
     def __init__(self):
-        self._client: Optional[openai.OpenAI] = None  # lazy — recreated when config changes
+        # One SDK client per (URL, key): different panels can use different connections at once.
+        self._clients: dict = {}
 
-    def _get_client(self, force_refresh: bool = False) -> openai.OpenAI:
-        if self._client is None or force_refresh:
-            self._client = openai.OpenAI(**_client_kwargs("", _load_base_url()))
-        return self._client
+    def invalidate(self) -> None:
+        """Drop cached clients (call after connections or keys change)."""
+        self._clients.clear()
 
-    def _model(self) -> str:
-        return _load_model()
+    def _client_for(self, r: Resolved) -> openai.OpenAI:
+        key = (r.base_url, hashlib.sha256(r.api_key.encode("utf-8")).hexdigest()[:16])
+        client = self._clients.get(key)
+        if client is None:
+            client = openai.OpenAI(**_client_kwargs(r.api_key, r.base_url))
+            self._clients[key] = client
+        return client
 
     @staticmethod
     def _prepare(messages: list[dict], system: Optional[str]) -> list[dict]:
@@ -300,12 +350,12 @@ class AIClient:
             full.append({"role": m.get("role", "user"), "content": m.get("content", "")})
         return full
 
-    def _create(self, model: str, messages: list[dict], max_tokens: int, stream: bool):
+    def _create(self, r: Resolved, model: str, messages: list[dict], max_tokens: int, stream: bool):
         """chat.completions.create with two compatibility retries on a 400 about the limit:
         providers differ on the parameter name (OpenAI's newer models want
         max_completion_tokens and reject max_tokens) and on the largest allowed value."""
-        client = self._get_client()
-        param = "max_completion_tokens" if "api.openai.com" in _load_base_url() else "max_tokens"
+        client = self._client_for(r)
+        param = "max_completion_tokens" if "api.openai.com" in r.base_url else "max_tokens"
         switched = False
         for _ in range(5):
             try:
@@ -334,11 +384,14 @@ class AIClient:
         system: Optional[str] = None,
         max_tokens: Optional[int] = None,
         model: Optional[str] = None,
+        resolved: Optional[Resolved] = None,
     ) -> str:
+        r = resolved or resolve_legacy()
         resp = self._create(
-            model or self._model(),
+            r,
+            model or r.model,
             self._prepare(messages, system),
-            max_tokens or _load_max_tokens(_load_base_url()),
+            max_tokens or _load_max_tokens(r.base_url),
             stream=False,
         )
         return resp.choices[0].message.content or ""
@@ -352,12 +405,15 @@ class AIClient:
         system: Optional[str] = None,
         max_tokens: Optional[int] = None,
         model: Optional[str] = None,
+        resolved: Optional[Resolved] = None,
     ) -> Generator[object, None, None]:
+        r = resolved or resolve_legacy()
         finish: Optional[str] = None
         with self._create(
-            model or self._model(),
+            r,
+            model or r.model,
             self._prepare(messages, system),
-            max_tokens or _load_max_tokens(_load_base_url()),
+            max_tokens or _load_max_tokens(r.base_url),
             stream=True,
         ) as stream:
             for chunk in stream:

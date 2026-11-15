@@ -17,6 +17,9 @@ hiddenimports = [
     # uvicorn picks loops/protocols/lifespan implementations by string name at
     # runtime, which static analysis cannot see.
     *collect_submodules("uvicorn"),
+    # keyring picks its OS backend (Windows Credential Manager, macOS Keychain, Secret
+    # Service) by entry point at run time; without these the frozen app has no keystore.
+    *collect_submodules("keyring.backends"),
     # imported lazily inside functions
     "lxml",
     "lxml.etree",
