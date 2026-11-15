@@ -511,20 +511,40 @@ def _skill_score(stems: list[str], text: str) -> int:
     return sum(1 for s in stems if re.search(r"\b" + re.escape(s), text))
 
 
+# The topic words of the built-in skills. Every Apex or SOQL prompt contains them (and the
+# Apex/SOQL panels add them), so they cannot qualify a skill that also has a more specific
+# topic word: 'apex-debug-logs' must not load for a test-class prompt just because both say apex.
+_DOMAIN_STEMS = {"apex", "soql", "sosl"}
+
+
+def _qualifies(stems: list[str], text: str) -> bool:
+    """A skill is relevant when one of its specific topic words appears in the text; a skill
+    named only with domain words (e.g. 'apex-guide') qualifies on those."""
+    specific = [s for s in stems if s not in _DOMAIN_STEMS]
+    return _skill_score(specific or stems, text) >= 1
+
+
 def _build_user_skills_context(text: str = "", mode: str = "relevant",
                                max_chars: int = MAX_USER_SKILL_CHARS) -> str:
-    """
-    Build the context block for skills in the user skills dir (added via Add Skill).
+    """The context block only; see _user_skills for the selection rules."""
+    return _user_skills(text, mode, max_chars)[0]
 
-    mode "relevant" (default): include a skill only if a topic word from its name
+
+def _user_skills(text: str = "", mode: str = "relevant",
+                 max_chars: int = MAX_USER_SKILL_CHARS) -> tuple[str, list[str]]:
+    """
+    Build the context block for skills in the user skills dir (added via Add Skill) and the
+    display names of the skills that made it in.
+
+    mode "relevant" (default): include a skill only if a specific topic word from its name
     appears in `text` (the recent conversation, plus 'apex'/'soql' when those built-in
-    skills were detected). A skill whose name has no topic words is always included.
-    Best matches first, stopping at `max_chars` (default MAX_USER_SKILL_CHARS).
+    skills were detected); see _qualifies. A skill whose name has no topic words is always
+    included. Best matches first, stopping at `max_chars` (default MAX_USER_SKILL_CHARS).
     mode "all": include every added skill (still capped).
-    Returns '' if nothing qualifies.
+    Returns ('', []) if nothing qualifies.
     """
     if not USER_SKILLS.is_dir():
-        return ""
+        return "", []
     text = (text or "").lower()
     candidates: list[tuple[int, str, str]] = []   # (score, display, section)
     for skill_dir in sorted(USER_SKILLS.iterdir()):
@@ -542,8 +562,8 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant",
 
         # Decide relevance before reading any files
         stems = _skill_stems(skill_dir.name, display)
-        score = _skill_score(stems, text)
-        if mode != "all" and stems and score == 0:
+        score = _skill_score(stems, text)           # used to rank; _qualifies decides inclusion
+        if mode != "all" and stems and not _qualifies(stems, text):
             continue
 
         parts = []
@@ -566,11 +586,12 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant",
             candidates.append((score, display, f"## {display}\n\n" + "\n\n---\n\n".join(parts)))
 
     if not candidates:
-        return ""
+        return "", []
 
     # Best matches first; stop adding once the budget is used up
     candidates.sort(key=lambda c: (-c[0], c[1].lower()))
     sections: list[str] = []
+    names: list[str] = []
     used = 0
     skipped: list[str] = []
     for _score, display, section in candidates:
@@ -580,6 +601,7 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant",
                 continue
             section = section[:max_chars] + "\n\n[... skill truncated ...]"
         sections.append(section)
+        names.append(display)
         used += len(section)
     if skipped:
         log.warning("sf_skills: skipped added skills over the %d-char budget: %s", max_chars, skipped)
@@ -590,7 +612,7 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant",
         "The following additional guidance has been added to Avio.\n\n"
         + "\n\n===\n\n".join(sections)
         + "\n\n=== END ADDITIONAL SKILL REFERENCE ==="
-    )
+    ), names
 
 
 # ---------------------------------------------------------------------------
@@ -670,9 +692,17 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None,
 def augment_system(system: Optional[str], messages: list[dict],
                    force_skills: Optional[list[str]] = None,
                    local: bool = False) -> str:
+    """The augmented system prompt only; see augment_with_skills."""
+    return augment_with_skills(system, messages, force_skills, local)[0]
+
+
+def augment_with_skills(system: Optional[str], messages: list[dict],
+                        force_skills: Optional[list[str]] = None,
+                        local: bool = False) -> tuple[str, list[str]]:
     """
     Detect relevant skills from message history and append their context
-    to the system prompt. Returns the (possibly unchanged) system string.
+    to the system prompt. Returns (system string, names of the skills actually injected),
+    so the UI can show what was used instead of asking the model.
     `force_skills` are included regardless of keyword detection.
     `local=True` (Ollama and other local servers) switches to a condensed summary that
     fits a small context window; see LOCAL_SKILL_BUDGET / "skills_local_budget".
@@ -681,7 +711,7 @@ def augment_system(system: Optional[str], messages: list[dict],
     cfg = _load_skills_config()
 
     if not cfg.get("enabled", True):
-        return system or ""
+        return system or "", []
 
     budget: Optional[int] = None
     if local:
@@ -691,13 +721,16 @@ def augment_system(system: Optional[str], messages: list[dict],
             b = LOCAL_SKILL_BUDGET
         budget = None if b < 0 else b          # -1 = send everything, like a cloud model
         if budget == 0:
-            return system or ""                # skills switched off for local models
+            return system or "", []            # skills switched off for local models
 
     skills = detect_skills(messages, force_skills)
     extra = build_skill_context(skills, cfg, budget=budget) if skills else ""
+    names: list[str] = []
     if extra:
         log.info("sf_skills: injecting skills %s (source=%s%s)", skills, cfg.get("source"),
                  f", condensed to ~{budget} chars" if budget is not None else "")
+        suffix = " (condensed)" if budget is not None else ""
+        names = [f"{_SKILL_LABELS.get(s, s)}{suffix}" for s in skills]
 
     # Skills the user added: only the ones relevant to this conversation. The built-in
     # topics count as words in the conversation, so an added 'apex-test' skill is picked
@@ -708,13 +741,14 @@ def augment_system(system: Optional[str], messages: list[dict],
     else:
         user_cap = max(0, budget - len(extra))   # whatever the built-in summary left over
     if user_cap >= 1500:
-        user_ctx = _build_user_skills_context(
+        user_ctx, user_names = _user_skills(
             _recent_user_text(messages) + hints, cfg.get("inject", "relevant"), max_chars=user_cap)
         if user_ctx:
-            log.info("sf_skills: injecting added skills (%d chars)", len(user_ctx))
+            log.info("sf_skills: injecting added skills %s (%d chars)", user_names, len(user_ctx))
             extra += user_ctx
+            names += user_names
 
-    return (system or "") + extra if extra else (system or "")
+    return ((system or "") + extra if extra else (system or "")), names
 
 
 # ---------------------------------------------------------------------------

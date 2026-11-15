@@ -38,7 +38,7 @@ from query_history import _qh_save, _qh_load
 from ai_client import AIClient, StreamFinish, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
 import connections
 import secret_store
-from sf_skills import augment_system, get_skills_manifest, fetch_skill
+from sf_skills import augment_system, augment_with_skills, get_skills_manifest, fetch_skill
 from platform_env import avio_data_dir
 
 log = logging.getLogger(__name__)
@@ -842,10 +842,12 @@ def ai_chat(req: ChatRequest):
     except RuntimeError as e:      # no key / no model chosen
         return _sse_error(str(e))
     # Local models (Ollama etc.) have small context windows: send a condensed skill summary.
-    augmented_system = augment_system(req.system, req.messages, req.force_skills,
-                                      local=resolved.local)
+    augmented_system, skill_names = augment_with_skills(req.system, req.messages, req.force_skills,
+                                                        local=resolved.local)
     def _stream():
         try:
+            # Tell the UI which skills were really injected (first event, even when none).
+            yield f"data: {json.dumps({'skills': skill_names})}\n\n"
             for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None,
                                     resolved=resolved):
                 if isinstance(chunk, StreamFinish):

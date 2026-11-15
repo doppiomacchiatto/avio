@@ -307,19 +307,35 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
     config is used. Raises on failure so the caller can fall back.
     """
     url = (base_url or "").strip() or _load_base_url()
-    # Don't mix a typed-in URL with a different vendor's saved key by accident: a blank
-    # key falls back to the saved one, which is the normal "just refresh" case.
-    kwargs = _client_kwargs((api_key or "").strip(), url)
-    kwargs.update(timeout=10.0, max_retries=0)
-    page = openai.OpenAI(**kwargs).models.list()
+    key = (api_key or "").strip()
+    if not key and url.rstrip("/") == OPENCODE_GATEWAY_URL.rstrip("/"):
+        # OpenCode's model catalog is public: it answers a request with no Authorization header
+        # (and rejects a made-up key), so list it without one. The full list then shows as soon
+        # as the provider is chosen, before any key is entered.
+        raw_ids = _fetch_public_model_ids(url)
+    else:
+        # Don't mix a typed-in URL with a different vendor's saved key by accident: a blank
+        # key falls back to the saved one, which is the normal "just refresh" case.
+        kwargs = _client_kwargs(key, url)
+        kwargs.update(timeout=10.0, max_retries=0)
+        raw_ids = [m.id for m in openai.OpenAI(**kwargs).models.list().data]
     ids = []
-    for m in page.data:
-        mid = m.id.removeprefix("models/")   # Gemini prefixes ids with "models/"
+    for rid in raw_ids:
+        mid = rid.removeprefix("models/")   # Gemini prefixes ids with "models/"
         if not any(h in mid.lower() for h in _NON_CHAT_HINTS):
             ids.append(mid)
     if "anthropic.com" not in url:
         ids.sort(key=str.lower)   # Anthropic already returns newest first
     return ids
+
+
+def _fetch_public_model_ids(url: str) -> list[str]:
+    """GET <url>/models with no credentials and return the model ids (OpenAI list format)."""
+    import urllib.request
+    req = urllib.request.Request(url.rstrip("/") + "/models", headers={"User-Agent": "Avio"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
 
 
 class AIClient:
