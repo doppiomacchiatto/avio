@@ -39,6 +39,11 @@ from platform_env import avio_data_dir as _avio_data_dir
 CONFIG_PATH  = _avio_data_dir() / "config.json"
 USER_SKILLS  = _avio_data_dir() / "skills"   # downloaded/imported skills live here
 
+# Local models (Ollama, LM Studio) usually run with a ~4K-token context. The full Apex skill
+# alone is ~6K tokens, and Ollama silently drops the middle of an over-long prompt, so local
+# providers get a condensed summary instead (~1.5K tokens). Configurable: skills_local_budget.
+LOCAL_SKILL_BUDGET = 6000
+
 # Skills live under skills/<slug>/ in the forcedotcom/sf-skills repo
 GH_RAW_BASE  = "https://raw.githubusercontent.com/forcedotcom/sf-skills/main/skills"
 
@@ -74,11 +79,13 @@ def _load_skills_config() -> dict:
                 "custom_skills": raw.get("custom_skills",  []),
                 # "relevant" (default) or "all": which added skills get injected
                 "inject":        raw.get("skills_inject",  "relevant"),
+                # characters of skill text sent to local models; 0 = none, -1 = no limit
+                "local_budget":  raw.get("skills_local_budget", LOCAL_SKILL_BUDGET),
             }
     except Exception as e:
         log.debug("sf_skills: could not read config — %s", e)
     return {"enabled": True, "source": "bundled", "path": None, "url": None,
-            "custom_skills": [], "inject": "relevant"}
+            "custom_skills": [], "inject": "relevant", "local_budget": LOCAL_SKILL_BUDGET}
 
 
 def _resolve_skills_root(cfg: dict) -> Optional[Path]:
@@ -504,14 +511,15 @@ def _skill_score(stems: list[str], text: str) -> int:
     return sum(1 for s in stems if re.search(r"\b" + re.escape(s), text))
 
 
-def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
+def _build_user_skills_context(text: str = "", mode: str = "relevant",
+                               max_chars: int = MAX_USER_SKILL_CHARS) -> str:
     """
     Build the context block for skills in the user skills dir (added via Add Skill).
 
     mode "relevant" (default): include a skill only if a topic word from its name
     appears in `text` (the recent conversation, plus 'apex'/'soql' when those built-in
     skills were detected). A skill whose name has no topic words is always included.
-    Best matches first, stopping at MAX_USER_SKILL_CHARS.
+    Best matches first, stopping at `max_chars` (default MAX_USER_SKILL_CHARS).
     mode "all": include every added skill (still capped).
     Returns '' if nothing qualifies.
     """
@@ -566,15 +574,15 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
     used = 0
     skipped: list[str] = []
     for _score, display, section in candidates:
-        if used + len(section) > MAX_USER_SKILL_CHARS:
+        if used + len(section) > max_chars:
             if sections:
                 skipped.append(display)
                 continue
-            section = section[:MAX_USER_SKILL_CHARS] + "\n\n[... skill truncated ...]"
+            section = section[:max_chars] + "\n\n[... skill truncated ...]"
         sections.append(section)
         used += len(section)
     if skipped:
-        log.warning("sf_skills: skipped added skills over the %d-char budget: %s", MAX_USER_SKILL_CHARS, skipped)
+        log.warning("sf_skills: skipped added skills over the %d-char budget: %s", max_chars, skipped)
 
     return (
         "\n\n"
@@ -589,10 +597,33 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
+def _condense(text: str, limit: int) -> str:
+    """
+    Shrink one skill file to about `limit` characters: drop the YAML header, start at the
+    rules section if there is one (the most useful part), and cut at a heading or blank
+    line so a rule is not split mid-sentence.
+    """
+    body = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", text, count=1, flags=re.DOTALL).lstrip()
+    m = re.search(r"(?im)^##\s+[^\n]*(?:rules|constraints|guardrails)[^\n]*$", body)
+    if m:
+        body = body[m.start():]
+    if len(body) <= limit:
+        return body
+    cut = body[:limit]
+    idx = max(cut.rfind("\n### "), cut.rfind("\n## "), cut.rfind("\n\n"))
+    if idx > limit * 0.5:
+        cut = cut[:idx]
+    return cut.rstrip() + "\n\n[... condensed for a small context window ...]"
+
+
+def build_skill_context(skills: list[str], cfg: Optional[dict] = None,
+                        budget: Optional[int] = None) -> str:
     """
     Assemble skill markdown for the given skill names into a single block
     ready to append to the system prompt. Returns "" if nothing available.
+
+    `budget` (characters) switches to condensed mode for small-context models: only each
+    skill's SKILL.md is used, shrunk with _condense, sharing the budget between skills.
     """
     if not skills:
         return ""
@@ -604,15 +635,20 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
     use_http = (root is None)
     base_url = _effective_base_url(cfg) if use_http else ""
 
+    per_skill = (budget // len(skills)) if budget is not None else 0
     sections: list[str] = []
     for skill in skills:
         files = SKILL_FILES.get(skill, [])
+        if budget is not None:
+            files = files[:1]   # SKILL.md only; reference files are too big for a small context
         parts = []
         for f in files:
             content = (
                 _load_file_url(base_url, f) if use_http
                 else _load_file_local(root, f)
             )
+            if content and budget is not None:
+                content = _condense(content, per_skill)
             if content:
                 parts.append(content)
         if parts:
@@ -632,31 +668,51 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
 
 
 def augment_system(system: Optional[str], messages: list[dict],
-                   force_skills: Optional[list[str]] = None) -> str:
+                   force_skills: Optional[list[str]] = None,
+                   local: bool = False) -> str:
     """
     Detect relevant skills from message history and append their context
     to the system prompt. Returns the (possibly unchanged) system string.
     `force_skills` are included regardless of keyword detection.
-    Respects skills_enabled and skills_source config from ~/.avio_config.json.
+    `local=True` (Ollama and other local servers) switches to a condensed summary that
+    fits a small context window; see LOCAL_SKILL_BUDGET / "skills_local_budget".
+    Respects skills_enabled and skills_source config from the Avio config.json.
     """
     cfg = _load_skills_config()
 
     if not cfg.get("enabled", True):
         return system or ""
 
+    budget: Optional[int] = None
+    if local:
+        try:
+            b = int(cfg.get("local_budget", LOCAL_SKILL_BUDGET))
+        except (TypeError, ValueError):
+            b = LOCAL_SKILL_BUDGET
+        budget = None if b < 0 else b          # -1 = send everything, like a cloud model
+        if budget == 0:
+            return system or ""                # skills switched off for local models
+
     skills = detect_skills(messages, force_skills)
-    extra = build_skill_context(skills, cfg) if skills else ""
+    extra = build_skill_context(skills, cfg, budget=budget) if skills else ""
     if extra:
-        log.info("sf_skills: injecting skills %s (source=%s)", skills, cfg.get("source"))
+        log.info("sf_skills: injecting skills %s (source=%s%s)", skills, cfg.get("source"),
+                 f", condensed to ~{budget} chars" if budget is not None else "")
 
     # Skills the user added: only the ones relevant to this conversation. The built-in
     # topics count as words in the conversation, so an added 'apex-test' skill is picked
     # up in the Apex Runner even when the prompt never says "apex".
     hints = (" apex" if APEX_SKILL in skills else "") + (" soql" if SOQL_SKILL in skills else "")
-    user_ctx = _build_user_skills_context(_recent_user_text(messages) + hints, cfg.get("inject", "relevant"))
-    if user_ctx:
-        log.info("sf_skills: injecting added skills (%d chars)", len(user_ctx))
-        extra += user_ctx
+    if budget is None:
+        user_cap = MAX_USER_SKILL_CHARS
+    else:
+        user_cap = max(0, budget - len(extra))   # whatever the built-in summary left over
+    if user_cap >= 1500:
+        user_ctx = _build_user_skills_context(
+            _recent_user_text(messages) + hints, cfg.get("inject", "relevant"), max_chars=user_cap)
+        if user_ctx:
+            log.info("sf_skills: injecting added skills (%d chars)", len(user_ctx))
+            extra += user_ctx
 
     return (system or "") + extra if extra else (system or "")
 

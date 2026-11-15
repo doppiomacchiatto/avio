@@ -6,24 +6,35 @@ endpoint (OpenAI, Anthropic via compat layer, Azure OpenAI, local Ollama,
 custom gateways, etc.).
 
 Config priority (highest → lowest):
-  1. opencode.config.json  in project root (developer override)
+  1. opencode.config.json  in project root (developer override, git-ignored;
+     copy opencode.config.example.json to create it)
   2. OPENCODE_API_KEY / OPENCODE_BASE_URL / OPENCODE_MODEL env vars
-  3. ~/.avio_api_key   (written by Avio Settings modal)
-  4. ~/.avio_config.json  model / base_url fields
+  3. <Avio data dir>/api_key   (written by Avio Settings modal)
+  4. <Avio data dir>/config.json  model / base_url fields
   5. Legacy ~/.sf_tools_config.json  (old SOQL Explorer config)
+
+Optional config.json keys: "max_tokens" (reply limit), "skills_inject",
+"skills_local_budget" (see sf_skills.py). OPENCODE_MAX_TOKENS overrides max_tokens.
 """
 from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional
 
 import openai
 from platform_env import avio_data_dir
 
-DEFAULT_MODEL   = "gpt-4o"
-MAX_TOKENS      = 4096
+DEFAULT_MODEL    = "gpt-4o"
+# Reasoning models spend part of the limit on hidden thinking (a 4096 limit cut a Claude
+# Apex answer off mid-code), so cloud providers get a generous limit. Local servers
+# usually run with a ~4K context, so a bigger limit would not help there.
+CLOUD_MAX_TOKENS = 16384
+LOCAL_MAX_TOKENS = 4096
+# If a model rejects the limit as too large, retry with the next smaller value.
+_MAX_TOKEN_LADDER = (16384, 8192, 4096, 2048)
 
 CONFIG_PATH      = avio_data_dir() / "config.json"
 API_KEY_PATH     = avio_data_dir() / "api_key"
@@ -196,6 +207,33 @@ def _is_local(url: str) -> bool:
     return any(h in (url or "") for h in ("localhost", "127.0.0.1", "[::1]"))
 
 
+def is_local_provider() -> bool:
+    """True when the configured base URL is a local server (Ollama, LM Studio, ...)."""
+    return _is_local(_load_base_url())
+
+
+def _load_max_tokens(url: str) -> int:
+    """Reply limit: OPENCODE_MAX_TOKENS, then config.json "max_tokens", then a per-provider default."""
+    for raw in (os.environ.get("OPENCODE_MAX_TOKENS"), _load_avio_config().get("max_tokens")):
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            pass
+    return LOCAL_MAX_TOKENS if _is_local(url) else CLOUD_MAX_TOKENS
+
+
+@dataclass
+class StreamFinish:
+    """Yielded last by AIClient.stream(): why the model stopped ("stop", "length", ...)."""
+    reason: Optional[str]
+
+    @property
+    def truncated(self) -> bool:
+        return self.reason == "length"   # hit the token limit; the answer is incomplete
+
+
 def _client_kwargs(api_key: str, url: str) -> dict:
     """Constructor kwargs for openai.OpenAI, with per-vendor quirks applied."""
     key = (api_key or "").strip()
@@ -251,6 +289,42 @@ class AIClient:
     def _model(self) -> str:
         return _load_model()
 
+    @staticmethod
+    def _prepare(messages: list[dict], system: Optional[str]) -> list[dict]:
+        """System prompt + messages, keeping only role/content. The UI stores extra fields
+        on messages (e.g. `system: true`), which strict providers reject."""
+        full: list[dict] = []
+        if system:
+            full.append({"role": "system", "content": system})
+        for m in messages:
+            full.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+        return full
+
+    def _create(self, model: str, messages: list[dict], max_tokens: int, stream: bool):
+        """chat.completions.create with two compatibility retries on a 400 about the limit:
+        providers differ on the parameter name (OpenAI's newer models want
+        max_completion_tokens and reject max_tokens) and on the largest allowed value."""
+        client = self._get_client()
+        param = "max_completion_tokens" if "api.openai.com" in _load_base_url() else "max_tokens"
+        switched = False
+        for _ in range(5):
+            try:
+                return client.chat.completions.create(
+                    model=model, messages=messages, stream=stream, **{param: max_tokens})
+            except openai.BadRequestError as e:
+                msg = str(e).lower()
+                if "max_tokens" not in msg and "max_completion_tokens" not in msg:
+                    raise
+                other = "max_tokens" if param == "max_completion_tokens" else "max_completion_tokens"
+                if not switched and other in msg and ("unsupported" in msg or "not supported" in msg):
+                    param, switched = other, True
+                    continue
+                smaller = next((n for n in _MAX_TOKEN_LADDER if n < max_tokens), None)
+                if smaller is None:
+                    raise
+                max_tokens = smaller
+        raise RuntimeError("could not find a token limit the provider accepts")
+
     # ------------------------------------------------------------------
     # One-shot (returns full text)
     # ------------------------------------------------------------------
@@ -258,41 +332,40 @@ class AIClient:
         self,
         messages: list[dict],
         system: Optional[str] = None,
-        max_tokens: int = MAX_TOKENS,
+        max_tokens: Optional[int] = None,
         model: Optional[str] = None,
     ) -> str:
-        full_messages = []
-        if system:
-            full_messages.append({"role": "system", "content": system})
-        full_messages.extend(messages)
-        resp = self._get_client().chat.completions.create(
-            model=model or self._model(),
-            max_tokens=max_tokens,
-            messages=full_messages,
+        resp = self._create(
+            model or self._model(),
+            self._prepare(messages, system),
+            max_tokens or _load_max_tokens(_load_base_url()),
+            stream=False,
         )
         return resp.choices[0].message.content or ""
 
     # ------------------------------------------------------------------
-    # Streaming (yields text deltas)
+    # Streaming (yields text deltas, then one StreamFinish)
     # ------------------------------------------------------------------
     def stream(
         self,
         messages: list[dict],
         system: Optional[str] = None,
-        max_tokens: int = MAX_TOKENS,
+        max_tokens: Optional[int] = None,
         model: Optional[str] = None,
-    ) -> Generator[str, None, None]:
-        full_messages = []
-        if system:
-            full_messages.append({"role": "system", "content": system})
-        full_messages.extend(messages)
-        with self._get_client().chat.completions.create(
-            model=model or self._model(),
-            max_tokens=max_tokens,
-            messages=full_messages,
+    ) -> Generator[object, None, None]:
+        finish: Optional[str] = None
+        with self._create(
+            model or self._model(),
+            self._prepare(messages, system),
+            max_tokens or _load_max_tokens(_load_base_url()),
             stream=True,
         ) as stream:
             for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
+                if not chunk.choices:        # e.g. Azure's leading chunk, or a usage-only chunk
+                    continue
+                choice = chunk.choices[0]
+                if choice.delta.content:
+                    yield choice.delta.content
+                if choice.finish_reason:
+                    finish = choice.finish_reason
+        yield StreamFinish(finish)

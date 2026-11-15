@@ -31,7 +31,7 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, PROVIDER_PRESETS, fetch_models, needs_key, save_config, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+from ai_client import AIClient, StreamFinish, is_local_provider, PROVIDER_PRESETS, fetch_models, needs_key, save_config, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
 from sf_skills import augment_system, get_skills_manifest, fetch_skill
 from platform_env import avio_data_dir
 
@@ -659,10 +659,16 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/ai/chat")
 def ai_chat(req: ChatRequest):
-    augmented_system = augment_system(req.system, req.messages, req.force_skills)
+    # Local models (Ollama etc.) have small context windows: send a condensed skill summary.
+    augmented_system = augment_system(req.system, req.messages, req.force_skills,
+                                      local=is_local_provider())
     def _stream():
         try:
             for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None):
+                if isinstance(chunk, StreamFinish):
+                    if chunk.truncated:   # the model hit its token limit mid-answer
+                        yield f"data: {json.dumps({'truncated': True})}\n\n"
+                    continue
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
