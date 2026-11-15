@@ -9,6 +9,8 @@ import { api, apiStream } from "../api/client";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
+import { SlowHint, TruncatedNotice } from "../components/AiNotices";
 
 const PAGE_SIZE = 50;
 
@@ -26,6 +28,7 @@ function AiPanel({ query, results, onInsert, onClose }) {
   const [input,     setInput]     = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamBuf, setStreamBuf] = useState("");
+  const [truncated, setTruncated] = useState(false);   // last reply hit the token limit
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -60,6 +63,7 @@ Be concise and direct.`;
     setInput("");
     setStreaming(true);
     setStreamBuf("");
+    setTruncated(false);
     let fullText = "";
 
     await apiStream(
@@ -74,20 +78,8 @@ Be concise and direct.`;
           : `⚠ Error: ${err}` }]);
         setStreaming(false); setStreamBuf("");
       },
+      () => setTruncated(true),   // the model hit its token limit mid-answer
     );
-  }
-
-  function parseBlocks(text) {
-    const parts = [];
-    const re = /```(?:soql|sql|apex|javascript)?\n?([\s\S]*?)```/g;
-    let last = 0, m;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) parts.push({ type: "text", content: text.slice(last, m.index) });
-      parts.push({ type: "code", content: m[1].trimEnd() });
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) parts.push({ type: "text", content: text.slice(last) });
-    return parts;
   }
 
   function AssistantMessage({ content }) {
@@ -98,9 +90,11 @@ Be concise and direct.`;
         ) : (
           <div key={i} className="relative group">
             <pre className="text-xs font-mono bg-gray-950 border border-gray-700 rounded p-3 overflow-x-auto text-green-300 leading-5">{b.content}</pre>
-            <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => onInsert(b.content)} className="px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">→ Use Query</button>
-            </div>
+            {isLang(b.lang, SOQL_LANGS) && (
+              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => onInsert(b.content)} className="px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">→ Use Query</button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -113,7 +107,7 @@ Be concise and direct.`;
         <span className="text-sm font-semibold text-white">✨ OpenCode AI</span>
         <div className="flex items-center gap-2">
           {messages.length > 0 && (
-            <button onClick={() => { setMessages([]); setStreamBuf(""); }} className="text-xs text-slate-300 hover:text-red-400">🗑 Clear</button>
+            <button onClick={() => { setMessages([]); setStreamBuf(""); setTruncated(false); }} className="text-xs text-slate-300 hover:text-red-400">🗑 Clear</button>
           )}
           <button onClick={onClose} className="text-slate-300 hover:text-white text-sm">✕</button>
         </div>
@@ -147,9 +141,13 @@ Be concise and direct.`;
         ))}
         {streaming && streamBuf && <div className="w-full"><AssistantMessage content={streamBuf} /></div>}
         {streaming && !streamBuf && (
-          <div className="flex items-center gap-2 text-xs text-slate-300">
-            <Spinner label="" /><span>OpenCode is thinking…</span>
+          <div className="text-xs text-slate-300">
+            <div className="flex items-center gap-2"><Spinner label="" /><span>OpenCode is thinking…</span></div>
+            <SlowHint dark />
           </div>
+        )}
+        {truncated && !streaming && (
+          <TruncatedNotice dark onContinue={() => sendMessage(CONTINUE_PROMPT)} />
         )}
         <div ref={bottomRef} />
       </div>

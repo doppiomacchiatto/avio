@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { api, apiStream, openSaveDialog, openDirDialog } from "../api/client";
 import { invoke } from "@tauri-apps/api/core";
 import { apexFileFor, buildExportFiles, metaXml, joinPath, baseName } from "../apexExport";
+import { parseBlocks, isLang, APEX_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
+import { SlowHint, TruncatedNotice } from "../components/AiNotices";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import { debugLog } from "../debugLog";
@@ -56,6 +58,7 @@ function AiPanel({ code, lastLog, onInsert, onClose, apiVersion }) {
   const [streamBuf,    setStreamBuf]    = useState("");
   const [exportMsg,    setExportMsg]    = useState(null);   // { ok, text }
   const [overwrite,    setOverwrite]    = useState(null);   // { dir, entries, existing }
+  const [truncated,    setTruncated]    = useState(false);  // last reply hit the token limit
   const bottomRef  = useRef(null);
   const version = apiVersion || "68.0";
 
@@ -159,6 +162,7 @@ Be concise and direct. No need to repeat the question.`;
     setInput("");
     setStreaming(true);
     setStreamBuf("");
+    setTruncated(false);
 
     let fullText = "";
 
@@ -186,27 +190,15 @@ Be concise and direct. No need to repeat the question.`;
         setStreaming(false);
         setStreamBuf("");
       },
+      // onTruncated: the model hit its token limit mid-answer
+      () => setTruncated(true),
     );
-  }
-
-  // Parse assistant message for code blocks — returns array of {type:"text"|"code", content}
-  function parseBlocks(text) {
-    const parts = [];
-    const re = /```(?:apex|javascript|java|soql)?\n?([\s\S]*?)```/g;
-    let last = 0;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) parts.push({ type: "text",  content: text.slice(last, m.index) });
-      parts.push({ type: "code", content: m[1].trimEnd() });
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) parts.push({ type: "text", content: text.slice(last) });
-    return parts;
   }
 
   function AssistantMessage({ content }) {
     const blocks = parseBlocks(content);
-    const codes = blocks.filter((b) => b.type === "code").map((b) => b.content);
+    // Only Apex blocks can be inserted or exported; models also add ```xml meta files, JSON, ...
+    const codes = blocks.filter((b) => b.type === "code" && isLang(b.lang, APEX_LANGS)).map((b) => b.content);
     const saveable = buildExportFiles(codes, version);
     return (
       <div className="flex flex-col gap-2">
@@ -218,11 +210,13 @@ Be concise and direct. No need to repeat the question.`;
               </p>
             );
           }
+          const insertable = isLang(b.lang, APEX_LANGS);   // not for ```xml / json / shell blocks
           return (
             <div key={i} className="relative group">
               <pre className="text-xs font-mono bg-gray-950 border border-gray-700 rounded p-3 overflow-x-auto text-green-300 leading-5">
                 {b.content}
               </pre>
+              {insertable && (
               <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={() => onInsert("replace", b.content)}
@@ -248,6 +242,7 @@ Be concise and direct. No need to repeat the question.`;
                   </button>
                 )}
               </div>
+              )}
             </div>
           );
         })}
@@ -274,7 +269,7 @@ Be concise and direct. No need to repeat the question.`;
         <div className="flex items-center gap-2">
           {messages.length > 0 && (
             <button
-              onClick={() => { setMessages([]); setStreamBuf(""); }}
+              onClick={() => { setMessages([]); setStreamBuf(""); setTruncated(false); }}
               className="text-xs text-slate-300 hover:text-red-400 transition-colors"
               title="Clear conversation"
             >
@@ -339,10 +334,16 @@ Be concise and direct. No need to repeat the question.`;
           </div>
         )}
         {streaming && !streamBuf && (
-          <div className="flex items-center gap-2 text-xs text-slate-300">
-            <Spinner label="" />
-            <span>OpenCode is thinking…</span>
+          <div className="text-xs text-slate-300">
+            <div className="flex items-center gap-2">
+              <Spinner label="" />
+              <span>OpenCode is thinking…</span>
+            </div>
+            <SlowHint dark />
           </div>
+        )}
+        {truncated && !streaming && (
+          <TruncatedNotice dark onContinue={() => sendMessage(CONTINUE_PROMPT)} />
         )}
 
         <div ref={bottomRef} />

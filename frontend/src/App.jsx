@@ -10,7 +10,7 @@ import OrgHealth from "./pages/OrgHealth";
 import RestExplorer from "./pages/RestExplorer";
 import DebugLogModal from "./components/DebugLogModal";
 import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
-import { api, waitForBackend, isTauri, openExternal } from "./api/client";
+import { api, waitForBackend, isTauri, openExternal, isLocalUrl } from "./api/client";
 import { debugLog, useDebugLog } from "./debugLog";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -887,6 +887,14 @@ export default function App() {
                     onChange={(e) => setSettingsDraft((d) => ({ ...d, base_url: e.target.value }))}
                     className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
                   />
+                  {isLocalUrl(settingsDraft.base_url) && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                      Local model: these usually run with a small context window (Ollama defaults to
+                      4,096 tokens), so Avio sends a condensed version of its Salesforce skills. To send
+                      the full skills, raise the model's context and set <code>"skills_local_budget": -1</code> in
+                      config.json. The first request can take a minute or two while the model loads.
+                    </span>
+                  )}
                 </label>
 
                 <label className="flex flex-col gap-1">

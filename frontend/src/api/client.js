@@ -109,7 +109,9 @@ async function apiRaw(path, opts = {}) {
   return res.json();
 }
 
-export async function apiStream(path, body, onDelta, onDone, onError) {
+// onTruncated() fires (before onDone) when the model stopped because it hit its token
+// limit, i.e. the answer is incomplete.
+export async function apiStream(path, body, onDelta, onDone, onError, onTruncated) {
   // Streaming SSE must use fetch directly (Tauri IPC doesn't support streaming)
   const port = window.__SF_BACKEND_PORT__ || 7891;
   const url  = `http://localhost:${port}${path}`;
@@ -147,11 +149,17 @@ export async function apiStream(path, body, onDelta, onDone, onError) {
       try {
         const obj = JSON.parse(payload);
         if (obj.error) { onError(obj.error); return; }
+        if (obj.truncated) onTruncated?.();
         if (obj.delta) onDelta(obj.delta);
       } catch {}
     }
   }
   onDone();
+}
+
+// True for a local model server (Ollama, LM Studio, ...), which usually has a small context window.
+export function isLocalUrl(url) {
+  return /(^|\/\/)(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(String(url || "").trim());
 }
 
 // window.__TAURI__ only exists when app.withGlobalTauri is true (it is not), so

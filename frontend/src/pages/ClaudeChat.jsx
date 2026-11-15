@@ -4,6 +4,8 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { api, apiStream } from "../api/client";
+import { CONTINUE_PROMPT } from "../aiBlocks";
+import { SlowHint, TruncatedNotice } from "../components/AiNotices";
 import Spinner from "../components/Spinner";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES, CATEGORY_ICONS,
@@ -323,6 +325,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
   const [messages,    setMessages]    = useState([]);
   const [input,       setInput]       = useState("");
   const [streaming,   setStreaming]   = useState(false);
+  const [truncated,   setTruncated]   = useState(false);   // last reply hit the token limit
   const [showHealth,  setShowHealth]  = useState(false);
   const [pendingAction, setPendingAction] = useState(null); // QUICK_ACTIONS entry
   const endRef = useRef(null);
@@ -359,6 +362,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
     const newMsgs = [...messages, userMsg];
     setMessages(newMsgs);
     setStreaming(true);
+    setTruncated(false);
 
     // Placeholder for assistant reply
     const placeholder = { role: "assistant", content: "" };
@@ -389,7 +393,8 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           updated[updated.length - 1] = { role: "assistant", content: `❌ ${err}` };
           return updated;
         });
-      }
+      },
+      () => setTruncated(true)   // the model hit its token limit mid-answer
     );
   }
 
@@ -434,7 +439,15 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           });
         },
         () => setStreaming(false),
-        (err) => { setStreaming(false); console.error(err); }
+        (err) => {
+          setStreaming(false);
+          setMessages((m) => {
+            const updated = [...m];
+            updated[updated.length - 1] = { role: "assistant", content: `❌ ${err}` };
+            return updated;
+          });
+        },
+        () => setTruncated(true)
       );
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: `❌ Failed to load fields: ${e.message}`, system: true }]);
@@ -493,7 +506,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           </button>
         ))}
         {messages.length > 0 && (
-          <button onClick={() => setMessages([])} disabled={streaming}
+          <button onClick={() => { setMessages([]); setTruncated(false); }} disabled={streaming}
             className="ml-auto px-3 py-1 text-xs text-slate-400 hover:text-red-500 transition-colors">
             🗑 Clear
           </button>
@@ -543,7 +556,13 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           <div className="flex justify-start">
             <div className="bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 rounded-2xl rounded-bl-sm px-4 py-2.5">
               <Spinner label="Thinking…" />
+              {!messages[messages.length - 1]?.content && <SlowHint />}
             </div>
+          </div>
+        )}
+        {truncated && !streaming && (
+          <div className="max-w-2xl">
+            <TruncatedNotice onContinue={() => sendMessage(CONTINUE_PROMPT)} />
           </div>
         )}
         <div ref={endRef} />
