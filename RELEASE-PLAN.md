@@ -26,8 +26,9 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 
 **Behaviour change to announce in the notes:** the first launch moves the saved API key into the OS keystore (Windows Credential Manager) as a "Default" connection and deletes the plain-text file; older versions can't read it afterwards.
 
-- [ ] **Run the new build** (built, not yet installed; see the handoff checklist) and check the Settings connection UI, the panel dropdowns, the token path (shell → page → backend), restart and close
-- [ ] Verify a chat through a **saved connection** with two providers side by side
+- [x] **Run the new build** and check the Settings connection UI, the panel dropdowns, the token path (shell → page → backend): installed and verified by the developer 2026-11-15, no issues (after the `d749d5b` fix for the stale model list)
+- [x] Verify a chat through a **saved connection** with two providers side by side (Anthropic and OpenAI): passed
+- [ ] Remaining before tagging `v1.0.2-beta`: merge dev into `main` (handoffs excluded), bump the version if wanted, build, new hashes, new release notes (reply-limit notice and Continue, local-model support, saved connections, keys in the OS keystore, per-launch token, and the first-launch key migration)
 
 - [ ] Smoke-test the new build (Apex Runner with a cloud model: full answer, Save all finds both classes; with Ollama: no hang, condensed skills; trigger a truncation with a tiny `max_tokens` and check the Continue button)
 - [ ] Test OpenAI and the OpenCode gateway once keys are available (the `max_completion_tokens` path is untested against OpenAI)
