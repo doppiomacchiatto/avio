@@ -41,7 +41,7 @@ Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically o
 
 **Startup.** In a packaged build the Tauri shell picks a free local port, starts the bundled `sf_backend` binary with `SF_BACKEND_PORT` set, and injects `window.__SF_BACKEND_PORT__` into the page. The UI waits for `/api/health` before loading orgs. In dev (`npm run dev`) the backend is started separately on the fixed port 7891. When the window closes, the shell asks the UI to confirm, then stops the backend and its child processes.
 
-**Requests.** The React UI calls the backend over HTTP on localhost (`frontend/src/api/client.js`); the Content Security Policy only allows `localhost` and `127.0.0.1`. AI chat uses Server-Sent Events (`/api/ai/chat`) for streaming. The shell also exposes Tauri commands (`api_get`, `api_post`) that proxy requests through Rust; the desktop client only supports GET and POST this way, so destructive actions have a POST alias.
+**Requests.** The React UI calls the backend over HTTP on localhost (`frontend/src/api/client.js`); the Content Security Policy only allows `localhost` and `127.0.0.1`. The backend listens on loopback only and requires a **per-launch token**: the shell generates a random secret at startup, hands it to the backend (`AVIO_API_TOKEN`) and to the page (`get_api_token`), and every `/api` call must send it as `Authorization: Bearer …` (only `/api/health` and the API docs are open). That stops other web pages and local programs from using your saved AI keys. With no token set, as in `npm run dev`, the backend is open. AI chat uses Server-Sent Events (`/api/ai/chat`) for streaming. The shell also exposes Tauri commands (`api_get`, `api_post`) that proxy requests through Rust; the desktop client only supports GET and POST this way, so destructive actions have a POST alias.
 
 **Native features** are Tauri commands and plugins, not backend routes: `write_file`, `path_exists`, `open_file`, `restart_backend`, `confirm_close`, and the dialog plugin (Save / Choose folder). In Tauri v2, `window.__TAURI__` only exists when `withGlobalTauri` is on (it is off), so the frontend uses `isTauri()` from `client.js` or imports `@tauri-apps/*` directly.
 
@@ -221,11 +221,22 @@ npx tauri build
 
 | OS | Location |
 |---|---|
-| Windows | `%APPDATA%\Avio\` (`config.json`, `api_key`, `skills\`, `query_history.db`) |
+| Windows | `%APPDATA%\Avio\` (`config.json`, `skills\`, `query_history.db`, `vr_snapshots.json`) |
 | macOS | `~/.avio/` |
 | Linux | `$XDG_DATA_HOME/avio/` (default `~/.local/share/avio/`) |
 
-The AI API key is stored in plain text in this folder, so treat it like a credential.
+AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
+
+## AI connections and API keys
+
+Settings → **AI connection** holds one saved connection per provider setup: a name, a provider (OpenAI, Anthropic, Google, OpenRouter, Groq, the OpenCode gateway, Ollama, or any OpenAI-compatible URL), a default model and an API key. The Apex Runner, SOQL Runner and AI Chat each have a small dropdown (shown once you have two or more connections) to pick which one that panel uses, and the choice is remembered, so one session can use OpenAI while another uses Claude. One connection is the default.
+
+- **Where keys live:** in your operating system's keystore, not in `config.json`: Windows Credential Manager, macOS Keychain, or the Linux Secret Service (gnome-keyring, KWallet). `config.json` only holds the connection's name, URL and model. No endpoint ever returns a key; the UI sees only "key saved" and the last four characters.
+- **What this protects against:** copied or backed-up settings files and roaming profiles. It does not stop other programs running as you from reading the keystore (Windows gives every process of your user the same access). The per-launch API token keeps other web pages and programs out of Avio's own API.
+- **macOS:** Keychain access belongs to the program that saved the key; until the app is code-signed, expect Keychain prompts after updates.
+- **Windows limit:** Credential Manager caps a value at about 1,280 characters. Longer values fall back to the private file store, and Settings shows a warning.
+- **Upgrading:** the first time the new version runs, an existing `api_key` file is moved into the keystore as a "Default" connection and the plain-text file is deleted (only after Avio has read the key back successfully). Older versions can't read it afterwards.
+- **Claude:** use an Anthropic API key from `console.anthropic.com`. A Claude Code login or a Claude Pro/Max subscription can't be used, just as a ChatGPT Plus subscription can't be used for the OpenAI API.
 
 ## AI skills
 
@@ -242,17 +253,20 @@ Avio asks for up to 16,384 tokens from cloud models (reasoning models spend part
 
 ### Developer override file
 
-A `opencode.config.json` in the project root (git-ignored) overrides the Settings dialog for the provider, key, URL and model. Copy `opencode.config.example.json` to create one, and delete any field you don't want to force. It only applies when running from source; the packaged app doesn't bundle it.
+A `opencode.config.json` in the project root (git-ignored), or `OPENCODE_API_KEY` / `OPENCODE_BASE_URL` / `OPENCODE_MODEL` in the environment, overrides the default connection's key, URL and model. A panel that has an explicit connection chosen ignores the override, and an override that points at a different host never borrows a saved key. Copy `opencode.config.example.json` to create one, and delete any field you don't want to force. It only applies when running from source; the packaged app doesn't bundle it.
 
 ## Environment variables
 
 | Variable            | Default | Purpose                        |
 |---------------------|---------|--------------------------------|
 | `SF_BACKEND_PORT`   | 7891 (dev) / free port (packaged) | Port for the FastAPI server |
-| `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` | — | AI provider API key (fallback if none is saved in Settings) |
-| `OPENCODE_BASE_URL` | — | AI gateway URL (OpenAI-compatible) |
-| `OPENCODE_MODEL`    | — | Default AI model |
+| `OPENCODE_API_KEY`  | — | Developer override of the default connection's API key (not saved anywhere) |
+| `OPENCODE_BASE_URL` | — | Developer override of the AI gateway URL (OpenAI-compatible) |
+| `OPENCODE_MODEL`    | — | Developer override of the AI model |
+| `ANTHROPIC_API_KEY` | — | Legacy fallback, used only when no connection exists |
 | `OPENCODE_MAX_TOKENS` | 16384 (cloud) / 4096 (local) | AI reply token limit |
+| `AVIO_API_TOKEN`    | — | Backend API token. Set by the app at launch; set it yourself only to test token auth in dev |
+| `AVIO_SECRET_BACKEND` | — | `file` forces the private file store instead of the OS keystore (headless Linux, tests) |
 | `AVIO_DEBUG`        | off | Verbose Salesforce CLI logging (`VENDAVIS_DEBUG` still works) |
 
 ---

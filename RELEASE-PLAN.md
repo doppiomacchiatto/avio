@@ -20,9 +20,14 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 
 ---
 
-## 1a. Next release: v1.0.2-beta (AI fixes)
+## 1a. Next release: v1.0.2-beta (AI fixes, saved connections, keystore, API token)
 
-`v1.0.1-beta` ships with the 4,096-token reply limit and no truncation warning, so long Apex answers from reasoning models are cut off silently, and local (Ollama) models lose most of the skill text. The fixes are on `opencode/mvp-0` (see `HANDOFF-2026-11-14.md`, "AI provider testing and fixes").
+`v1.0.1-beta` ships with the 4,096-token reply limit and no truncation warning, so long Apex answers from reasoning models are cut off silently, and local (Ollama) models lose most of the skill text. It also keeps the API key in a plain-text file and has an unauthenticated local API. The fixes are on `opencode/mvp-0` (see `HANDOFF-2026-11-14.md`: "AI provider testing and fixes" and "AI connections, OS-keystore keys and API token").
+
+**Behaviour change to announce in the notes:** the first launch moves the saved API key into the OS keystore (Windows Credential Manager) as a "Default" connection and deletes the plain-text file; older versions can't read it afterwards.
+
+- [ ] **Run the new build** (built, not yet installed; see the handoff checklist) and check the Settings connection UI, the panel dropdowns, the token path (shell → page → backend), restart and close
+- [ ] Verify a chat through a **saved connection** with two providers side by side
 
 - [ ] Smoke-test the new build (Apex Runner with a cloud model: full answer, Save all finds both classes; with Ollama: no hang, condensed skills; trigger a truncation with a tiny `max_tokens` and check the Continue button)
 - [ ] Test OpenAI and the OpenCode gateway once keys are available (the `max_completion_tokens` path is untested against OpenAI)
