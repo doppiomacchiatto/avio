@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { apexFileFor, buildExportFiles, metaXml, joinPath, baseName } from "../apexExport";
 import { parseBlocks, isLang, APEX_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice } from "../components/AiNotices";
+import ConnectionPicker from "../components/ConnectionPicker";
+import { useConnectionChoice } from "../connections";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import { debugLog } from "../debugLog";
@@ -59,6 +61,7 @@ function AiPanel({ code, lastLog, onInsert, onClose, apiVersion }) {
   const [exportMsg,    setExportMsg]    = useState(null);   // { ok, text }
   const [overwrite,    setOverwrite]    = useState(null);   // { dir, entries, existing }
   const [truncated,    setTruncated]    = useState(false);  // last reply hit the token limit
+  const conn = useConnectionChoice("apex");                   // which saved AI connection this panel uses
   const bottomRef  = useRef(null);
   const version = apiVersion || "68.0";
 
@@ -168,7 +171,8 @@ Be concise and direct. No need to repeat the question.`;
 
     await apiStream(
       "/api/claude/chat",
-      { messages: newMessages, system: buildSystemPrompt(), force_skills: ["platform-apex-generate"] },
+      { messages: newMessages, system: buildSystemPrompt(), force_skills: ["platform-apex-generate"],
+        connection: conn.selected || undefined },
       // onDelta
       (delta) => {
         fullText += delta;
@@ -182,10 +186,8 @@ Be concise and direct. No need to repeat the question.`;
       },
       // onError
       (errMsg) => {
-        const isNoKey = errMsg.includes("No Anthropic API key");
-        const display = isNoKey
-          ? "🔑 No API key configured. Click **⚙ Settings** in the top bar, paste your Anthropic API key, and hit Save."
-          : `⚠ Error: ${errMsg}`;
+        // The backend's own message already says what is missing and for which connection.
+        const display = /No API key/i.test(errMsg) ? `🔑 ${errMsg}` : `⚠ Error: ${errMsg}`;
         setMessages((prev) => [...prev, { role: "assistant", content: display }]);
         setStreaming(false);
         setStreamBuf("");
@@ -267,6 +269,7 @@ Be concise and direct. No need to repeat the question.`;
           ✨ <span>OpenCode AI</span>
         </span>
         <div className="flex items-center gap-2">
+          <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} />
           {messages.length > 0 && (
             <button
               onClick={() => { setMessages([]); setStreamBuf(""); setTruncated(false); }}
@@ -308,7 +311,7 @@ Be concise and direct. No need to repeat the question.`;
             <span className="text-slate-400">Your editor code and last log are sent as context.</span>
             <div className="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-600 text-left">
               <p className="text-yellow-400 font-semibold mb-1">⚙ First time setup</p>
-              <p className="text-slate-300">Click <strong className="text-white">⚙ Settings</strong> in the top bar and paste your Anthropic API key to get started.</p>
+              <p className="text-slate-300">Click <strong className="text-white">⚙ Settings</strong> in the top bar and add an AI connection (provider and API key) to get started.</p>
             </div>
           </div>
         )}

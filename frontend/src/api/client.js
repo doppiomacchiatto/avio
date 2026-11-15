@@ -17,6 +17,32 @@ async function getInvoke() {
   return _invoke;
 }
 
+// Per-launch API token. The Tauri shell generates it, passes it to the backend, and hands it to
+// the page through the get_api_token command (more reliable than a variable injected into the
+// page, which a reload would lose). It is "" in dev mode, where the backend is open.
+let _token = null;
+
+export async function getApiToken() {
+  if (_token !== null) return _token;
+  let token = "";
+  if (isTauri()) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      token = (await invoke("get_api_token")) || "";
+    } catch { /* older shell without the command: backend is open */ }
+  } else {
+    token = window.__AVIO_TOKEN__ || "";
+  }
+  _token = token;
+  return _token;
+}
+
+// Header to add to every direct fetch() to the backend.
+export async function authHeaders() {
+  const t = await getApiToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 export async function api(path, opts = {}) {
   const method = (opts.method || "GET").toUpperCase();
   const t0 = performance.now();
@@ -86,10 +112,8 @@ async function apiRaw(path, opts = {}) {
   const url  = `http://localhost:${port}${path}`;
   let res;
   try {
-    res = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-      ...opts,
-    });
+    const headers = { "Content-Type": "application/json", ...(await authHeaders()), ...(opts.headers || {}) };
+    res = await fetch(url, { ...opts, headers });
   } catch (e) {
     throw new Error(
       `Cannot reach backend at ${url}\n` +
@@ -119,7 +143,7 @@ export async function apiStream(path, body, onDelta, onDone, onError, onTruncate
   try {
     res = await fetch(url, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body:    JSON.stringify(body),
     });
   } catch (e) {

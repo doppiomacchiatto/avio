@@ -6,6 +6,8 @@ import { useState, useRef, useEffect } from "react";
 import { api, apiStream } from "../api/client";
 import { CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice } from "../components/AiNotices";
+import ConnectionPicker from "../components/ConnectionPicker";
+import { useConnectionChoice } from "../connections";
 import Spinner from "../components/Spinner";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES, CATEGORY_ICONS,
@@ -326,6 +328,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
   const [input,       setInput]       = useState("");
   const [streaming,   setStreaming]   = useState(false);
   const [truncated,   setTruncated]   = useState(false);   // last reply hit the token limit
+  const conn = useConnectionChoice("chat");                  // which saved AI connection this tab uses
   const [showHealth,  setShowHealth]  = useState(false);
   const [pendingAction, setPendingAction] = useState(null); // QUICK_ACTIONS entry
   const endRef = useRef(null);
@@ -371,7 +374,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
     let full = "";
     await apiStream(
       "/api/ai/chat",
-      { messages: newMsgs, system: buildSystem() },
+      { messages: newMsgs, system: buildSystem(), connection: conn.selected || undefined },
       (delta) => {
         full += delta;
         setMessages((m) => {
@@ -429,7 +432,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
       let autoFull = "";
       await apiStream(
         "/api/ai/chat",
-        { messages: nextMsgs, system: buildSystem() },
+        { messages: nextMsgs, system: buildSystem(), connection: conn.selected || undefined },
         (delta) => {
           autoFull += delta;
           setMessages((m) => {
@@ -505,12 +508,15 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
             {a.emoji} {a.label}
           </button>
         ))}
-        {messages.length > 0 && (
-          <button onClick={() => { setMessages([]); setTruncated(false); }} disabled={streaming}
-            className="ml-auto px-3 py-1 text-xs text-slate-400 hover:text-red-500 transition-colors">
-            🗑 Clear
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} dark={false} />
+          {messages.length > 0 && (
+            <button onClick={() => { setMessages([]); setTruncated(false); }} disabled={streaming}
+              className="px-3 py-1 text-xs text-slate-400 hover:text-red-500 transition-colors">
+              🗑 Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Messages */}

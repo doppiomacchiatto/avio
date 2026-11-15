@@ -11,6 +11,8 @@ import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
 import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice } from "../components/AiNotices";
+import ConnectionPicker from "../components/ConnectionPicker";
+import { useConnectionChoice } from "../connections";
 
 const PAGE_SIZE = 50;
 
@@ -29,6 +31,7 @@ function AiPanel({ query, results, onInsert, onClose }) {
   const [streaming, setStreaming] = useState(false);
   const [streamBuf, setStreamBuf] = useState("");
   const [truncated, setTruncated] = useState(false);   // last reply hit the token limit
+  const conn = useConnectionChoice("soql");              // which saved AI connection this panel uses
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -68,13 +71,12 @@ Be concise and direct.`;
 
     await apiStream(
       "/api/claude/chat",
-      { messages: newMessages, system: buildSystem() },
+      { messages: newMessages, system: buildSystem(), connection: conn.selected || undefined },
       (delta) => { fullText += delta; setStreamBuf(fullText); },
       () => { setMessages(prev => [...prev, { role: "assistant", content: fullText }]); setStreaming(false); setStreamBuf(""); },
       (err) => {
-        const isNoKey = err.includes("No Anthropic API key");
-        setMessages(prev => [...prev, { role: "assistant", content: isNoKey
-          ? "🔑 No API key configured. Click **⚙ Settings** in the top bar."
+        setMessages(prev => [...prev, { role: "assistant", content: /No API key/i.test(err)
+          ? `🔑 ${err}`
           : `⚠ Error: ${err}` }]);
         setStreaming(false); setStreamBuf("");
       },
@@ -106,6 +108,7 @@ Be concise and direct.`;
       <div className="shrink-0 flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700">
         <span className="text-sm font-semibold text-white">✨ OpenCode AI</span>
         <div className="flex items-center gap-2">
+          <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} />
           {messages.length > 0 && (
             <button onClick={() => { setMessages([]); setStreamBuf(""); setTruncated(false); }} className="text-xs text-slate-300 hover:text-red-400">🗑 Clear</button>
           )}
