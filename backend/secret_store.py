@@ -47,16 +47,17 @@ def _keyring():
         return None
 
 
-def _fallback_dir() -> Path:
+def _fallback_dir(create: bool = False) -> Path:
     d = avio_data_dir() / "secrets"
-    d.mkdir(parents=True, exist_ok=True)
-    if sys.platform != "win32":
-        os.chmod(d, 0o700)
+    if create:                      # only when a secret is actually written there
+        d.mkdir(parents=True, exist_ok=True)
+        if sys.platform != "win32":
+            os.chmod(d, 0o700)
     return d
 
 
-def _fallback_path(account: str) -> Path:
-    return _fallback_dir() / (re.sub(r"[^A-Za-z0-9._-]", "_", account) + ".key")
+def _fallback_path(account: str, create: bool = False) -> Path:
+    return _fallback_dir(create) / (re.sub(r"[^A-Za-z0-9._-]", "_", account) + ".key")
 
 
 def _file_get(account: str) -> Optional[str]:
@@ -68,7 +69,7 @@ def _file_get(account: str) -> Optional[str]:
 
 
 def _file_set(account: str, value: str) -> None:
-    p = _fallback_path(account)
+    p = _fallback_path(account, create=True)
     p.write_text(value, encoding="utf-8")
     if sys.platform != "win32":
         os.chmod(p, 0o600)
