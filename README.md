@@ -77,6 +77,7 @@ avio/
 │       ├── data/             # Static data (Org Health checks)
 │       └── pages/            # FlsExplorer, ProfilesExplorer, SoqlRunner, ApexRunner,
 │                             # RestExplorer, OrgHealth, ClaudeChat
+├── docs/                     # User guides (AI connections and API keys)
 ├── scripts/venv-run.mjs      # Runs tools from backend/.venv on any OS
 └── HANDOFF-*.md              # Session handoff notes for developers
 ```
@@ -229,14 +230,20 @@ AI API keys are **not** stored in this folder: see "AI connections and API keys"
 
 ## AI connections and API keys
 
-Settings → **AI connection** holds one saved connection per provider setup: a name, a provider (OpenAI, Anthropic, Google, OpenRouter, Groq, the OpenCode gateway, Ollama, or any OpenAI-compatible URL), a default model and an API key. The Apex Runner, SOQL Runner and AI Chat each have a small dropdown (shown once you have two or more connections) to pick which one that panel uses, and the choice is remembered, so one session can use OpenAI while another uses Claude. One connection is the default.
+Under **⚙ Settings → AI Model**, each **AI connection** is one saved provider setup: a name, a provider (OpenAI, Anthropic, Google, OpenRouter, Groq, the OpenCode gateway, Ollama, or any OpenAI-compatible URL), a model and an API key. The Apex Runner, SOQL Runner and AI Chat each get a dropdown (once you have two or more connections) to choose which one that panel uses, so one session can use OpenAI while another uses Claude. One connection is the default.
 
-- **Where keys live:** in your operating system's keystore, not in `config.json`: Windows Credential Manager, macOS Keychain, or the Linux Secret Service (gnome-keyring, KWallet). `config.json` only holds the connection's name, URL and model. No endpoint ever returns a key; the UI sees only "key saved" and the last four characters.
-- **What this protects against:** copied or backed-up settings files and roaming profiles. It does not stop other programs running as you from reading the keystore (Windows gives every process of your user the same access). The per-launch API token keeps other web pages and programs out of Avio's own API.
-- **macOS:** Keychain access belongs to the program that saved the key; until the app is code-signed, expect Keychain prompts after updates.
-- **Windows limit:** Credential Manager caps a value at about 1,280 characters. Longer values fall back to the private file store, and Settings shows a warning.
-- **Upgrading:** the first time the new version runs, an existing `api_key` file is moved into the keystore as a "Default" connection and the plain-text file is deleted (only after Avio has read the key back successfully). Older versions can't read it afterwards.
-- **Claude:** use an Anthropic API key from `console.anthropic.com`. A Claude Code login or a Claude Pro/Max subscription can't be used, just as a ChatGPT Plus subscription can't be used for the OpenAI API.
+**To set one up:** get an API key from your provider's console, open ⚙ Settings → AI Model → *＋ New connection…*, pick the provider, paste the key, choose a model and Save. A chat subscription isn't an API key: ChatGPT Plus and a Claude Pro/Max or Claude Code login can't be used.
+
+**How keys are used and stored, in short:**
+
+- Keys live in your **operating system's keystore** (Windows Credential Manager, macOS Keychain, Linux Secret Service), not in `config.json`, which only holds each connection's name, URL and model.
+- The page never receives a key. It sends the backend a connection id; the backend reads the key from the keystore and sends it, as a bearer token, **only to that connection's own URL**. No endpoint ever returns a key, and Settings shows only "key saved" and the last four characters.
+- Changing a connection's provider or URL drops its saved key, so a key is never sent to a provider it wasn't saved for.
+- This protects against copied or backed-up settings files; it does not stop other programs running as you from reading the keystore. The per-launch API token keeps other web pages and programs out of Avio's own API.
+- If no system keystore exists, keys fall back to a private, **unencrypted** file and Settings warns you.
+- The first run of 1.0.2 or later moves an old plain-text `api_key` file into the keystore as a "Default" connection and deletes the file (after confirming the keystore returns the key). Older versions can't read it afterwards.
+
+**Full guide: [docs/ai-connections-and-keys.md](docs/ai-connections-and-keys.md)** covers per-provider setup, rotating or removing keys, exactly what is sent to your provider, where each OS stores keys, developer overrides and troubleshooting.
 
 ## AI skills
 
