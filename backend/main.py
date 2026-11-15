@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import re
 import json
 import time
 from contextlib import asynccontextmanager
@@ -124,6 +125,8 @@ AVAILABLE_MODELS = [
     {"id": "gpt-5.4-mini",              "label": "GPT 5.4 Mini      — OpenCode, low cost"},
     {"id": "deepseek-v4.1-flash",       "label": "DeepSeek V4.1 Flash — OpenCode, low cost"},
     # OpenAI
+    {"id": "gpt-5-mini",                "label": "GPT-5 mini      — OpenAI reasoning, fast and low cost"},
+    {"id": "gpt-4.1-mini",              "label": "GPT-4.1 mini    — OpenAI, fast and low cost"},
     {"id": "gpt-4o",                    "label": "GPT-4o          — OpenAI flagship, fast and capable"},
     {"id": "gpt-4o-mini",               "label": "GPT-4o mini     — OpenAI lightweight, low cost"},
     {"id": "o3",                        "label": "o3              — OpenAI reasoning model"},
@@ -206,9 +209,9 @@ def post_models(req: ModelsRequest):
     the default connection, then the legacy single-key setup. A typed key beats a stored one,
     so a connection can be re-tested before saving.
     """
+    url = (req.base_url or "").strip()
     try:
         key = (req.api_key or "").strip()
-        url = (req.base_url or "").strip()
         conn_id = req.connection
         if not conn_id and not url and not key and not has_dev_override():
             conn_id = connections.default_id()          # plain refresh: the default connection
@@ -226,7 +229,21 @@ def post_models(req: ModelsRequest):
             raise RuntimeError("provider returned no models")
         return {"source": "live", "models": [{"id": i, "label": i} for i in ids]}
     except Exception as e:
-        return {"source": "fallback", "error": str(e)[:300], "models": AVAILABLE_MODELS}
+        return {"source": "fallback", "error": str(e)[:300], "models": _fallback_models(url)}
+
+
+def _fallback_models(url: str) -> list:
+    """The built-in model list narrowed to the provider at `url`, for when the live list could
+    not be fetched. The full list mixes vendors, so showing it for OpenAI offered Claude ids."""
+    u = (url or "").lower()
+    if "api.openai.com" in u:
+        return [m for m in AVAILABLE_MODELS if re.match(r"(gpt-|o\d)", m["id"])]
+    if "anthropic.com" in u:
+        return [m for m in AVAILABLE_MODELS if m["id"].startswith("claude-")]
+    if any(h in u for h in ("localhost", "127.0.0.1", "[::1]")):
+        return []                       # a local server's models are whatever you pulled
+    return AVAILABLE_MODELS
+
 
 @app.post("/api/settings")
 def post_settings(req: SettingsRequest):

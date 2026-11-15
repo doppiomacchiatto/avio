@@ -222,7 +222,10 @@ export default function App() {
   function pickProvider(id) {
     const p = providers.find((x) => x.id === id);
     const base_url = p ? (p.id === "custom" ? settingsDraft.base_url : p.base_url) : "";
-    const next = { ...settingsDraft, base_url };
+    // A different provider means the old model id (and its model list) no longer applies.
+    const changed = normUrl(base_url) !== normUrl(settingsDraft.base_url);
+    const next = { ...settingsDraft, base_url, model: changed ? "" : settingsDraft.model };
+    if (changed) setAvailModels([]);
     setSettingsDraft(next);
     if (p && p.id !== "custom") refreshModels(next);
   }
@@ -252,6 +255,9 @@ export default function App() {
 
   // ── Saved AI connections ──────────────────────────────────────────────────
   const editingConn = connections.find((c) => c.id === editingId) || null;
+  // A saved key belongs to the provider it was saved for. If the URL has been changed, the old
+  // key is not reused (the backend drops it on save), so a new one must be entered.
+  const keyReusable = !!editingConn?.key_set && normUrl(editingConn.base_url) === normUrl(settingsDraft.base_url);
 
   // Refresh the list here and for every open AI panel (via the shared cache in connections.js).
   async function reloadConnections() {
@@ -271,7 +277,10 @@ export default function App() {
       const openai = providers.find((p) => p.id === "openai");
       setEditingId("");
       setConnLabel("");
-      setSettingsDraft((s) => ({ ...s, api_key: "", model: "", base_url: openai?.base_url || "" }));
+      const fresh = { ...settingsDraft, api_key: "", model: "", base_url: openai?.base_url || "" };
+      setSettingsDraft(fresh);
+      setAvailModels([]);            // drop the previous connection's list (it was another provider's models)
+      refreshModels(fresh, "");
       return;
     }
     const c = connections.find((x) => x.id === id);
@@ -341,8 +350,10 @@ export default function App() {
     const url = settingsDraft.base_url.trim();
     if (!/^https?:\/\/\S+$/.test(url)) throw new Error("The gateway URL must start with http:// or https://");
     if (!settingsDraft.model) throw new Error("Choose a model for this connection.");
-    if (!isLocalUrl(url) && !settingsDraft.api_key.trim() && !editingConn?.key_set) {
-      throw new Error("Paste an API key for this connection. It is stored in your system keystore, not in Avio's settings files.");
+    if (!isLocalUrl(url) && !settingsDraft.api_key.trim() && !keyReusable) {
+      throw new Error(editingConn?.key_set
+        ? "You changed the provider URL, so paste an API key for the new provider. The saved key belongs to the old one and isn't reused."
+        : "Paste an API key for this connection. It is stored in your system keystore, not in Avio's settings files.");
     }
     const res = await api("/api/ai/connections", {
       method: "POST",
@@ -1057,15 +1068,19 @@ export default function App() {
                 <label className="flex flex-col gap-1">
                   <span className="font-medium text-gray-700 dark:text-gray-300">
                     API Key
-                    {editingConn?.key_set && (
+                    {keyReusable && (
                       <span className="ml-2 text-xs text-green-500 font-normal">✓ key saved ({editingConn.key_hint})</span>
+                    )}
+                    {editingConn?.key_set && !keyReusable && (
+                      <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 font-normal">saved key is for the old provider and won't be reused</span>
                     )}
                   </span>
                   <input
                     type="password"
+                    onBlur={() => { if (settingsDraft.api_key.trim()) refreshModels(); }}
                     placeholder={
                       activeProvider?.needs_key === false || isLocalUrl(settingsDraft.base_url) ? "Not needed for a local server"
-                      : editingConn?.key_set ? "Leave blank to keep the saved key"
+                      : keyReusable ? "Leave blank to keep the saved key"
                       : activeProvider?.key_hint || "oc_sk_… (OpenCode) or sk-… (OpenAI)"
                     }
                     value={settingsDraft.api_key}

@@ -143,6 +143,9 @@ def upsert(*, conn_id: Optional[str] = None, label: str = "", preset: str = "cus
                 new_id = f"{base}-{n}"
             existing = {"id": new_id}
             recs.append(existing)
+        # A saved key belongs to the host it was saved for. If the URL changes and no new key is
+        # supplied, drop the old one rather than send it to a different provider.
+        host_changed = ("base_url" in existing and _norm_url(existing["base_url"]) != _norm_url(base_url))
         existing.update({"label": label, "preset": preset or "custom",
                          "base_url": base_url, "model": (model or "").strip()})
 
@@ -157,6 +160,8 @@ def upsert(*, conn_id: Optional[str] = None, label: str = "", preset: str = "cus
             secret_store.delete(_account(existing["id"]))
         elif api_key is not None and api_key.strip():
             secret_store.set(_account(existing["id"]), api_key.strip())
+        elif host_changed:
+            secret_store.delete(_account(existing["id"]))
         return _public(existing)
 
 
