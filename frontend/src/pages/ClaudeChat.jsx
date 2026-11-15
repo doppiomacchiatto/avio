@@ -5,7 +5,7 @@
 import { useState, useRef, useEffect } from "react";
 import { api, apiStream } from "../api/client";
 import { CONTINUE_PROMPT } from "../aiBlocks";
-import { SlowHint, TruncatedNotice } from "../components/AiNotices";
+import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import Spinner from "../components/Spinner";
@@ -372,6 +372,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
     setMessages((m) => [...m, placeholder]);
 
     let full = "";
+    let skills = null;
     await apiStream(
       "/api/ai/chat",
       { messages: newMsgs, system: buildSystem(), connection: conn.selected || undefined },
@@ -379,7 +380,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
         full += delta;
         setMessages((m) => {
           const updated = [...m];
-          updated[updated.length - 1] = { role: "assistant", content: full };
+          updated[updated.length - 1] = { role: "assistant", content: full, skills };
           return updated;
         });
       },
@@ -397,7 +398,8 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           return updated;
         });
       },
-      () => setTruncated(true)   // the model hit its token limit mid-answer
+      () => setTruncated(true),  // the model hit its token limit mid-answer
+      (names) => { skills = names; }   // skills the backend really injected (shown once text arrives)
     );
   }
 
@@ -430,6 +432,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
       setMessages((m) => [...m, autoPlaceholder]);
 
       let autoFull = "";
+      let autoSkills = null;
       await apiStream(
         "/api/ai/chat",
         { messages: nextMsgs, system: buildSystem(), connection: conn.selected || undefined },
@@ -437,7 +440,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           autoFull += delta;
           setMessages((m) => {
             const updated = [...m];
-            updated[updated.length - 1] = { role: "assistant", content: autoFull };
+            updated[updated.length - 1] = { role: "assistant", content: autoFull, skills: autoSkills };
             return updated;
           });
         },
@@ -450,7 +453,8 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
             return updated;
           });
         },
-        () => setTruncated(true)
+        () => setTruncated(true),
+        (names) => { autoSkills = names; }
       );
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: `❌ Failed to load fields: ${e.message}`, system: true }]);
@@ -555,6 +559,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
                 : "bg-white dark:bg-gray-800 text-slate-800 dark:text-gray-100 border border-slate-200 dark:border-gray-700 rounded-bl-sm"
             }`}>
               <MarkdownText text={msg.content} />
+              {msg.role === "assistant" && !msg.system && msg.content && <SkillsUsed skills={msg.skills} />}
             </div>
           </div>
         ))}

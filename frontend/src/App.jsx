@@ -158,6 +158,7 @@ export default function App() {
   const [providers,     setProviders]     = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsNote,    setModelsNote]    = useState("");
+  const [modelCustom,   setModelCustom]   = useState(false);   // typing a model id that the provider's list lacks
   const [settingsSaved, setSettingsSaved] = useState("");   // "" | "saved" | "error:<msg>"
   // Saved AI connections: provider + URL + model, with the API key held in the OS keystore.
   const [connections,   setConnections]   = useState([]);
@@ -225,7 +226,7 @@ export default function App() {
     // A different provider means the old model id (and its model list) no longer applies.
     const changed = normUrl(base_url) !== normUrl(settingsDraft.base_url);
     const next = { ...settingsDraft, base_url, model: changed ? "" : settingsDraft.model };
-    if (changed) setAvailModels([]);
+    if (changed) { setAvailModels([]); setModelCustom(false); }
     setSettingsDraft(next);
     if (p && p.id !== "custom") refreshModels(next);
   }
@@ -273,6 +274,7 @@ export default function App() {
   function pickConnection(id) {
     setConfirmDelete(false);
     setConnNote("");
+    setModelCustom(false);
     if (id === "__new__") {
       const openai = providers.find((p) => p.id === "openai");
       setEditingId("");
@@ -328,6 +330,7 @@ export default function App() {
 
   // Like pickConnection, for a record we just fetched (state may not have updated yet).
   function pickConnectionFrom(c) {
+    setModelCustom(false);
     setEditingId(c.id);
     setConnLabel(c.label);
     const next = { ...settingsDraft, api_key: "", model: c.model || "", base_url: c.base_url };
@@ -1125,8 +1128,12 @@ export default function App() {
                     </button>
                   </span>
                   <select
-                    value={settingsDraft.model}
-                    onChange={(e) => setSettingsDraft((d) => ({ ...d, model: e.target.value }))}
+                    value={modelCustom ? "__custom__" : settingsDraft.model}
+                    onChange={(e) => {
+                      if (e.target.value === "__custom__") { setModelCustom(true); return; }
+                      setModelCustom(false);
+                      setSettingsDraft((d) => ({ ...d, model: e.target.value }));
+                    }}
                     className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   >
                     <option value="">Choose a model…</option>
@@ -1136,7 +1143,19 @@ export default function App() {
                     {availModels.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
+                    <option value="__custom__">✎ Other: type a model id…</option>
                   </select>
+                  {modelCustom && (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={settingsDraft.model}
+                      onChange={(e) => setSettingsDraft((d) => ({ ...d, model: e.target.value.trim() }))}
+                      placeholder="exact model id, e.g. gemini-3.5-flash"
+                      spellCheck={false}
+                      className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+                    />
+                  )}
                   {modelsNote && <span className="text-xs text-gray-400">{modelsNote}</span>}
                 </label>
 

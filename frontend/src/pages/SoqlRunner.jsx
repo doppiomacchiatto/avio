@@ -10,7 +10,7 @@ import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
 import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
-import { SlowHint, TruncatedNotice } from "../components/AiNotices";
+import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 
@@ -32,6 +32,7 @@ function AiPanel({ query, results, onInsert, onClose }) {
   const [streamBuf, setStreamBuf] = useState("");
   const [truncated, setTruncated] = useState(false);   // last reply hit the token limit
   const conn = useConnectionChoice("soql");              // which saved AI connection this panel uses
+  const [streamSkills, setStreamSkills] = useState(null); // skills the backend injected into the current reply
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -67,13 +68,18 @@ Be concise and direct.`;
     setStreaming(true);
     setStreamBuf("");
     setTruncated(false);
+    setStreamSkills(null);
     let fullText = "";
+    let skills = null;
 
     await apiStream(
       "/api/claude/chat",
-      { messages: newMessages, system: buildSystem(), connection: conn.selected || undefined },
+      // Always give the model the SOQL skill here: the panel is SOQL by definition, and a prompt
+      // like "open opportunities over 100000" has none of the keywords that detection looks for.
+      { messages: newMessages, system: buildSystem(), force_skills: ["platform-soql-query"],
+        connection: conn.selected || undefined },
       (delta) => { fullText += delta; setStreamBuf(fullText); },
-      () => { setMessages(prev => [...prev, { role: "assistant", content: fullText }]); setStreaming(false); setStreamBuf(""); },
+      () => { setMessages(prev => [...prev, { role: "assistant", content: fullText, skills }]); setStreaming(false); setStreamBuf(""); setStreamSkills(null); },
       (err) => {
         setMessages(prev => [...prev, { role: "assistant", content: /No API key/i.test(err)
           ? `🔑 ${err}`
@@ -81,6 +87,7 @@ Be concise and direct.`;
         setStreaming(false); setStreamBuf("");
       },
       () => setTruncated(true),   // the model hit its token limit mid-answer
+      (names) => { skills = names; setStreamSkills(names); },   // skills the backend really injected
     );
   }
 
@@ -138,14 +145,15 @@ Be concise and direct.`;
           <div key={i} className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
             {msg.role === "user"
               ? <div className="max-w-[90%] bg-blue-600 text-white text-xs px-3 py-2 rounded-2xl rounded-tr-sm">{msg.content}</div>
-              : <div className="w-full"><AssistantMessage content={msg.content} /></div>
+              : <div className="w-full"><AssistantMessage content={msg.content} /><SkillsUsed skills={msg.skills} dark /></div>
             }
           </div>
         ))}
-        {streaming && streamBuf && <div className="w-full"><AssistantMessage content={streamBuf} /></div>}
+        {streaming && streamBuf && <div className="w-full"><AssistantMessage content={streamBuf} /><SkillsUsed skills={streamSkills} dark /></div>}
         {streaming && !streamBuf && (
           <div className="text-xs text-slate-300">
             <div className="flex items-center gap-2"><Spinner label="" /><span>OpenCode is thinking…</span></div>
+            <SkillsUsed skills={streamSkills} dark />
             <SlowHint dark />
           </div>
         )}

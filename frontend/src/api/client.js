@@ -134,8 +134,9 @@ async function apiRaw(path, opts = {}) {
 }
 
 // onTruncated() fires (before onDone) when the model stopped because it hit its token
-// limit, i.e. the answer is incomplete.
-export async function apiStream(path, body, onDelta, onDone, onError, onTruncated) {
+// limit, i.e. the answer is incomplete. onSkills(names) fires first with the skills the
+// backend actually injected into the prompt (an empty array when none).
+export async function apiStream(path, body, onDelta, onDone, onError, onTruncated, onSkills) {
   // Streaming SSE must use fetch directly (Tauri IPC doesn't support streaming)
   const port = window.__SF_BACKEND_PORT__ || 7891;
   const url  = `http://localhost:${port}${path}`;
@@ -174,6 +175,7 @@ export async function apiStream(path, body, onDelta, onDone, onError, onTruncate
         const obj = JSON.parse(payload);
         if (obj.error) { onError(obj.error); return; }
         if (obj.truncated) onTruncated?.();
+        if (Array.isArray(obj.skills)) onSkills?.(obj.skills);
         if (obj.delta) onDelta(obj.delta);
       } catch {}
     }

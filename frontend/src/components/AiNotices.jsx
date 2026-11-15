@@ -19,6 +19,19 @@ export function SlowHint({ after = 8, dark = false }) {
   );
 }
 
+// "Skills used" line under an AI reply: what the backend really injected into the prompt, so
+// there is no need to ask the model (its answer to "is the skill loaded?" proves nothing).
+// Renders nothing for messages that carry no skills info (errors, old messages).
+export function SkillsUsed({ skills, dark = false }) {
+  if (!Array.isArray(skills)) return null;
+  return (
+    <p className={`text-[11px] leading-snug ${dark ? "text-slate-400" : "text-slate-400 dark:text-gray-500"}`}
+       title="The Salesforce guidance Avio added to this request">
+      🧠 Skills used: {skills.length ? skills.join(", ") : "none"}
+    </p>
+  );
+}
+
 // Shown under a reply that stopped because the model hit its token limit.
 export function TruncatedNotice({ onContinue, disabled = false, dark = false }) {
   return (

@@ -3,7 +3,7 @@ import { api, apiStream, openSaveDialog, openDirDialog } from "../api/client";
 import { invoke } from "@tauri-apps/api/core";
 import { apexFileFor, buildExportFiles, metaXml, joinPath, baseName } from "../apexExport";
 import { parseBlocks, isLang, APEX_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
-import { SlowHint, TruncatedNotice } from "../components/AiNotices";
+import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import Spinner from "../components/Spinner";
@@ -62,6 +62,7 @@ function AiPanel({ code, lastLog, onInsert, onClose, apiVersion }) {
   const [overwrite,    setOverwrite]    = useState(null);   // { dir, entries, existing }
   const [truncated,    setTruncated]    = useState(false);  // last reply hit the token limit
   const conn = useConnectionChoice("apex");                   // which saved AI connection this panel uses
+  const [streamSkills, setStreamSkills] = useState(null);     // skills the backend injected into the current reply
   const bottomRef  = useRef(null);
   const version = apiVersion || "68.0";
 
@@ -166,8 +167,10 @@ Be concise and direct. No need to repeat the question.`;
     setStreaming(true);
     setStreamBuf("");
     setTruncated(false);
+    setStreamSkills(null);
 
     let fullText = "";
+    let skills = null;
 
     await apiStream(
       "/api/claude/chat",
@@ -180,9 +183,10 @@ Be concise and direct. No need to repeat the question.`;
       },
       // onDone
       () => {
-        setMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
+        setMessages((prev) => [...prev, { role: "assistant", content: fullText, skills }]);
         setStreaming(false);
         setStreamBuf("");
+        setStreamSkills(null);
       },
       // onError
       (errMsg) => {
@@ -194,6 +198,8 @@ Be concise and direct. No need to repeat the question.`;
       },
       // onTruncated: the model hit its token limit mid-answer
       () => setTruncated(true),
+      // onSkills: which skills the backend really injected into this request
+      (names) => { skills = names; setStreamSkills(names); },
     );
   }
 
@@ -325,6 +331,7 @@ Be concise and direct. No need to repeat the question.`;
             ) : (
               <div className="w-full">
                 <AssistantMessage content={msg.content} />
+                <SkillsUsed skills={msg.skills} dark />
               </div>
             )}
           </div>
@@ -334,6 +341,7 @@ Be concise and direct. No need to repeat the question.`;
         {streaming && streamBuf && (
           <div className="w-full">
             <AssistantMessage content={streamBuf} />
+            <SkillsUsed skills={streamSkills} dark />
           </div>
         )}
         {streaming && !streamBuf && (
@@ -342,6 +350,7 @@ Be concise and direct. No need to repeat the question.`;
               <Spinner label="" />
               <span>OpenCode is thinking…</span>
             </div>
+            <SkillsUsed skills={streamSkills} dark />
             <SlowHint dark />
           </div>
         )}
