@@ -234,6 +234,15 @@ AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](h
 - **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill.
 - **Added skills** (Settings → Skills → Add) are added only when a topic word from the skill's name appears in the conversation (`platform-apex-test-generate` matches "apex" and "test"; the Apex Runner counts as "apex"). Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
 - **Downloads** fetch `SKILL.md` plus every `.md` file it links to. GitHub / URL sources are cached in memory for an hour.
+- **Local models (Ollama, LM Studio)** usually run with a ~4K-token context, and Ollama silently drops the middle of a longer prompt. So for a local Gateway URL Avio sends a condensed skill summary (about 6,000 characters of each skill's rules, ~1.5K tokens) instead of the full text. Set `"skills_local_budget"` in `config.json` to change it (`0` = no skills for local models, `-1` = send everything, for models run with a large context). The first request to a local model can take a minute or two while it loads.
+
+### Reply length
+
+Avio asks for up to 16,384 tokens from cloud models (reasoning models spend part of that on hidden thinking) and 4,096 from local ones. If a model still stops at its limit, the chat shows **"The model hit its reply limit"** with a **Continue** button instead of presenting a cut-off answer as complete. Override the limit with `"max_tokens"` in `config.json` or the `OPENCODE_MAX_TOKENS` environment variable. If a provider rejects the limit as too large, or wants `max_completion_tokens` (newer OpenAI models), Avio retries automatically.
+
+### Developer override file
+
+A `opencode.config.json` in the project root (git-ignored) overrides the Settings dialog for the provider, key, URL and model. Copy `opencode.config.example.json` to create one, and delete any field you don't want to force. It only applies when running from source; the packaged app doesn't bundle it.
 
 ## Environment variables
 
@@ -243,6 +252,7 @@ AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](h
 | `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` | — | AI provider API key (fallback if none is saved in Settings) |
 | `OPENCODE_BASE_URL` | — | AI gateway URL (OpenAI-compatible) |
 | `OPENCODE_MODEL`    | — | Default AI model |
+| `OPENCODE_MAX_TOKENS` | 16384 (cloud) / 4096 (local) | AI reply token limit |
 | `AVIO_DEBUG`        | off | Verbose Salesforce CLI logging (`VENDAVIS_DEBUG` still works) |
 
 ---
