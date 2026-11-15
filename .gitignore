@@ -30,3 +30,5 @@ src-tauri/target/
 *.anthropic_key
 .vendavis_config.json
 .sf_tools_config.json
+# Developer override for the AI layer; copy opencode.config.example.json to create it
+opencode.config.json
