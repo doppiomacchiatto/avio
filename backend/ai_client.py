@@ -21,9 +21,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional
+from urllib.parse import urlparse
 
 import openai
 from platform_env import avio_data_dir
@@ -279,6 +282,124 @@ class StreamFinish:
         return self.reason == "length"   # hit the token limit; the answer is incomplete
 
 
+class ProviderStreamError(RuntimeError):
+    """An error the provider reported inside an otherwise successful stream. OpenRouter, for one,
+    sends a limit that is hit mid-reply as an event with finish_reason "error" after the HTTP 200,
+    so the SDK raises nothing and the reply would look like a normal (short) finish."""
+
+    def __init__(self, status=None, message: str = "", provider: Optional[str] = None, raw: str = ""):
+        super().__init__(message or "The provider stopped the reply with an error.")
+        self.status = _as_int(status)
+        self.message = message or ""
+        self.provider = provider
+        self.raw = raw or ""
+
+
+def _as_int(value) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clip(text: object, limit: int = 220) -> str:
+    s = re.sub(r"\s+", " ", str(text or "")).strip()
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
+
+
+def _retry_seconds(headers) -> Optional[int]:
+    """How long the provider says to wait, from Retry-After(-Ms) or OpenRouter's X-RateLimit-Reset
+    (epoch milliseconds). None when no usable hint is present."""
+    if headers is None:
+        return None
+    try:
+        get = headers.get
+        if get("retry-after-ms"):
+            secs = float(get("retry-after-ms")) / 1000
+        elif get("retry-after"):
+            secs = float(get("retry-after"))
+        elif get("x-ratelimit-reset"):
+            v = float(get("x-ratelimit-reset"))
+            secs = v / 1000 - time.time() if v > 1e12 else (v - time.time() if v > 1e9 else v)
+        else:
+            return None
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return int(secs) + 1 if 0 < secs <= 86400 else None
+
+
+def _human_wait(secs: Optional[int]) -> str:
+    if not secs:
+        return "a minute"
+    if secs < 90:
+        return f"about {secs} seconds"
+    if secs < 5400:
+        return f"about {round(secs / 60)} minutes"
+    return f"about {round(secs / 3600)} hours"
+
+
+def _error_parts(exc: Exception) -> dict:
+    """Status, provider message and extras from an SDK error or a ProviderStreamError."""
+    if isinstance(exc, ProviderStreamError):
+        return {"status": exc.status, "message": exc.message, "code": None,
+                "provider": exc.provider, "raw": exc.raw, "headers": None}
+    body = getattr(exc, "body", None)
+    err = body.get("error") if isinstance(body, dict) and isinstance(body.get("error"), dict) else \
+        (body if isinstance(body, dict) else {})
+    meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
+    resp = getattr(exc, "response", None)
+    return {"status": getattr(exc, "status_code", None),
+            "message": str(err.get("message") or getattr(exc, "message", "") or ""),
+            "code": err.get("code") or getattr(exc, "code", None),
+            "provider": meta.get("provider_name"),
+            "raw": meta.get("raw") or "",
+            "headers": getattr(resp, "headers", None)}
+
+
+def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Optional[str] = None) -> str:
+    """The text shown in the AI panel for a failed request. Rate limits (429) get a plain
+    explanation of what happened and what to do; every other error keeps its original text,
+    except an error reported mid-stream, which now surfaces instead of passing as a finish."""
+    p = _error_parts(exc)
+    if p["status"] != 429:
+        if isinstance(exc, ProviderStreamError):
+            code = f" (code {p['status']})" if p["status"] else ""
+            return f"The provider stopped the reply with an error{code}: {_clip(p['message'] or p['raw'], 300)}".rstrip(": ")
+        return str(exc)
+
+    host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
+    model = model or (r.model if r else "") or ""
+    openrouter = host.endswith("openrouter.ai")
+    openai_host = host.endswith("openai.com")
+    wait = _human_wait(_retry_seconds(p["headers"]))
+    low = f"{p['message']} {p['raw']} {p['code'] or ''}".lower()
+    skills_note = ("Avio adds Salesforce guidance to each AI message, which counts toward token limits; "
+                   "⚙ Settings → Skills can switch it off for a test.")
+
+    parts = [f"Rate limited (429) by {host}" + (f" for {model}" if model else "") + "."]
+    if p["code"] == "insufficient_quota" or (openai_host and ("quota" in low or "billing" in low)):
+        parts += ["This 429 is about billing, not speed: the account has no usable credit or quota.",
+                  "Add credit on the provider's billing page. A ChatGPT or Claude subscription does not cover API use."]
+    elif openrouter and model.endswith(":free"):
+        parts += ["Free models have strict limits (20 requests a minute; 50 a day, or 1,000 a day once you have "
+                  "bought $10 or more of credit), and the free provider behind them is often at capacity.",
+                  f"Wait {wait}, or switch to the paid model: in ⚙ Settings choose {model[:-5]} (without ':free').",
+                  skills_note]
+    elif openrouter:
+        parts += ["Every provider serving this model is busy right now (OpenRouter already tried the others).",
+                  f"Wait {wait} and send again."]
+    else:
+        parts += ["Requests or tokens are arriving faster than your plan allows.",
+                  f"Wait {wait} and send again. If it keeps happening, check the provider's rate limits.",
+                  skills_note]
+
+    detail = p["raw"] or p["message"]
+    if detail:
+        who = f" ({p['provider']})" if p["provider"] else ""
+        parts.append(f'The provider said{who}: "{_clip(detail)}"')
+    return "\n\n".join(parts)
+
+
 def _client_kwargs(api_key: str, url: str) -> dict:
     """Constructor kwargs for openai.OpenAI, with per-vendor quirks applied."""
     key = (api_key or "").strip()
@@ -446,9 +567,20 @@ class AIClient:
             stream=True,
         ) as stream:
             for chunk in stream:
+                # An error reported inside the stream (HTTP 200 already sent): raise it, or the
+                # reply would end as if it had finished normally.
+                err = (getattr(chunk, "model_extra", None) or {}).get("error")
+                if err:
+                    meta = err.get("metadata") if isinstance(err, dict) and isinstance(err.get("metadata"), dict) else {}
+                    raise ProviderStreamError(
+                        err.get("code") if isinstance(err, dict) else None,
+                        str(err.get("message") or "") if isinstance(err, dict) else str(err),
+                        meta.get("provider_name"), str(meta.get("raw") or ""))
                 if not chunk.choices:        # e.g. Azure's leading chunk, or a usage-only chunk
                     continue
                 choice = chunk.choices[0]
+                if choice.finish_reason == "error":
+                    raise ProviderStreamError()
                 if choice.delta.content:
                     yield choice.delta.content
                 if choice.finish_reason:

@@ -35,7 +35,7 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, StreamFinish, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+from ai_client import AIClient, StreamFinish, describe_error, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
 import connections
 import org_login
 import secret_store
@@ -889,7 +889,7 @@ def ai_chat(req: ChatRequest):
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': describe_error(e, resolved, req.model or resolved.model)})}\n\n"
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 # Keep old path as alias for backwards compatibility during migration
