@@ -392,6 +392,18 @@ def _openrouter_403_message(p: dict, r: "Resolved", model: Optional[str]) -> str
     region = _OR_REGION_NAMES.get(host, host)
     msg = p["message"] or ""
     parts = [f"OpenRouter refused this request (403) for {model or r.model}."]
+    if re.search(r"requires a business or enterprise plan|business or enterprise", msg, re.IGNORECASE):
+        # Not a guardrail: the account's plan does not include regional routing, so the EU and US
+        # addresses refuse every request, whatever the model.
+        parts.append(f"Your OpenRouter plan doesn't include {region} routing. The EU and US addresses need the "
+                     "Business or Enterprise plan (openrouter.ai/settings/manage-plan). This is about your account, "
+                     "not the model you chose.")
+        parts.append("Until you upgrade, set this connection's region to Global in ⚙ Settings → AI Model. A guardrail "
+                     "that limits Data regions to EU or US needs the same plan, so allow Global there too (or leave it "
+                     "unrestricted), or Global requests are refused as well. Global still follows your guardrail's allowed "
+                     "models and providers; what it can't promise is that prompts are processed in one region.")
+        parts.append(f'OpenRouter said: "{_clip(msg)}"')
+        return "\n\n".join(parts)
     m = re.search(r"hostnames?:\s*([\w.\-]+(?:\s*,\s*[\w.\-]+)*)", msg, re.IGNORECASE)
     if "data region" in msg.lower() or m:
         allowed = [h.strip().rstrip(".").lower() for h in m.group(1).split(",")] if m else []
