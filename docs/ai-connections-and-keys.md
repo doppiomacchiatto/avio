@@ -78,7 +78,12 @@ When you pick **OpenRouter**, Settings asks **"Where should your prompts be proc
 | **EU** | `eu.openrouter.ai` | Prompts processed only in Europe (EU/EEA, UK, Switzerland). Needs OpenRouter's **Business or Enterprise** plan. |
 | **US** | `us.openrouter.ai` | Prompts processed only in the US. Same plan requirement. |
 
-In EU and US, a model that OpenRouter hasn't made available in that region fails with an error instead of running somewhere else. The model list in Settings shows what the region offers. All three addresses use the same OpenRouter key, so switching region keeps your saved key.
+In EU and US, a model that OpenRouter hasn't made available in that region fails with an error instead of running somewhere else. This is by design (OpenRouter calls it "fails closed"), and a few consequences are worth knowing:
+
+- **Only some providers serve each region.** A provider might run a model from a data center in the region, but OpenRouter only uses it once it has onboarded that endpoint for the region. In a guardrail's provider list, a provider with no endpoints in your region shows a **"Not in US region"** (or EU) warning. Today the US region has about 15 providers and the EU region about 5, and a model often runs on only one of them (for example, Gemma and Nemotron run on DeepInfra only in the US region). Allow the providers that actually serve your region, or the model won't be available.
+- **Cloud "global" deployments are excluded.** Endpoints that can process a request in any region, such as Amazon Bedrock's cross-region profiles or Google Vertex's global location, don't count as in-region.
+- **Prices can differ.** Some providers charge a premium for serving a model from a specific region. On a regional address those endpoints are used, so a model can cost more than on Global.
+- **To see what a region offers**, use the model list in Settings (it's filtered by your region and workspace), or OpenRouter's models page with the *In-Region Routing* filter. The model list in Settings shows what the region offers. All three addresses use the same OpenRouter key, so switching region keeps your saved key.
 
 **Avio runs against the OpenRouter workspace that owns your API key.** Every OpenRouter key belongs to one workspace, and that workspace's guardrails (plus your account's privacy settings) decide what the key may do. Avio can't see or change them. To use a different workspace, add another connection with a key created in that workspace, for example one connection per workspace.
 
