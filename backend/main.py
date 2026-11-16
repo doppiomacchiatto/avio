@@ -37,6 +37,7 @@ from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
 from ai_client import AIClient, StreamFinish, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
 import connections
+import org_login
 import secret_store
 from sf_skills import augment_system, augment_with_skills, get_skills_manifest, fetch_skill
 from platform_env import avio_data_dir
@@ -428,6 +429,37 @@ def get_orgs():
         return {"orgs": [{"alias": a or u, "username": u, "isDefault": d} for a, u, d in orgs]}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# First-run login through the sf CLI (see org_login.py). The page names the org type only.
+class OrgLoginRequest(BaseModel):
+    type: str   # "production" | "test"
+
+@app.get("/api/org-login/options")
+def org_login_options():
+    return {"options": org_login.login_options()}
+
+@app.get("/api/org-login")
+def org_login_status():
+    return org_login.status()
+
+@app.post("/api/org-login")
+def org_login_start(req: OrgLoginRequest):
+    try:
+        job = org_login.start(req.type)
+        return {**job, "command": org_login.command_text(req.type)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Could not start the login: {e}")
+
+@app.post("/api/org-login/cancel")
+def org_login_cancel():
+    return org_login.cancel()
 
 # ---------------------------------------------------------------------------
 # Objects
