@@ -696,7 +696,7 @@ export default function App() {
         {activeTab === "apex"     && <ApexRunner  org={activeOrg} onApiCall={() => fetchLimits()} />}
         {activeTab === "health"   && <OrgHealth   org={activeOrg} onApiCall={() => fetchLimits()} />}
         {activeTab === "rest"     && <RestExplorer org={activeOrg} />}
-        {activeTab === "claude"   && <ClaudeChat  org={activeOrg} ctx={orgContext} setCtx={setOrgContext} />}
+        {activeTab === "claude"   && <ClaudeChat  org={activeOrg} ctx={orgContext} setCtx={setOrgContext} loadObjects={loadObjects} />}
       </main>
 
       {/* Global footer — API limit status bar */}

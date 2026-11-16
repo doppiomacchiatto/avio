@@ -8,6 +8,7 @@ import { CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
+import { buildChatSystem } from "../chatSystem";
 import Spinner from "../components/Spinner";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES, CATEGORY_ICONS,
@@ -323,7 +324,7 @@ const QUICK_ACTIONS = [
   },
 ];
 
-export default function ClaudeChat({ org, ctx, setCtx }) {
+export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
   const [messages,    setMessages]    = useState([]);
   const [input,       setInput]       = useState("");
   const [streaming,   setStreaming]   = useState(false);
@@ -335,19 +336,14 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  // The object list loads in the background when this tab opens (once per org; App caches it and
+  // skips a second call). Chat never waits for it: the prompt says whether it is there yet.
+  useEffect(() => {
+    if (org && !ctx.objectsLoaded && !ctx.objectsLoading) loadObjects?.();
+  }, [org?.alias]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   function buildSystem() {
-    const objList = (ctx.objects || [])
-      .map((o, i) => `${i + 1}. ${o.apiName} — ${o.label}`)
-      .join("\n");
-    return [
-      "You are a Salesforce expert assistant embedded in SF Metadata Explorer.",
-      "When the user asks about a Salesforce object, match it against this exact list and use the API name precisely:",
-      "",
-      objList || "(No objects loaded — ask the user to select an org first.)",
-      "",
-      "When you identify an object to query, output a tag: [SELECT_OBJECT: ApiName__c]",
-      "Always use the exact API names from the list above.",
-    ].join("\n");
+    return buildChatSystem(org, ctx);
   }
 
   async function sendChip(prompt) {
@@ -529,7 +525,15 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           <div className="text-center mt-12 text-sm px-6">
             <img src="/icon-128.png" alt="Avio" className="w-12 h-12 object-contain mx-auto mb-4" />
             <p className="font-semibold text-slate-900 dark:text-gray-100 text-base">Ask me anything about your Salesforce org.</p>
-            <p className="text-slate-400 text-xs mt-2">I know all the objects and fields loaded in this session.</p>
+            <p className="text-slate-400 text-xs mt-2">
+              {!org
+                ? "Select an org to ask about its objects. You can ask general Salesforce questions now."
+                : ctx.objectsLoading
+                ? "Loading your org's objects in the background. You can start chatting now."
+                : ctx.objects?.length
+                ? `I know your org's ${ctx.objects.length} objects, and the fields you open.`
+                : "Ask me anything about Salesforce."}
+            </p>
             <div className="mt-6 grid grid-cols-2 gap-2 max-w-sm mx-auto">
               <button onClick={() => setShowHealth(true)} disabled={!org}
                 className="p-3 bg-white dark:bg-gray-800 hover:bg-slate-50 dark:hover:bg-gray-700/50 border border-slate-200 dark:border-gray-700 rounded-xl text-left transition-colors disabled:opacity-40">
