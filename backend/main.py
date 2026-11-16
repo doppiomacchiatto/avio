@@ -228,7 +228,8 @@ def post_models(req: ModelsRequest):
         ids = fetch_models(key or None, url or None)
         if not ids:
             raise RuntimeError("provider returned no models")
-        return {"source": "live", "models": [{"id": i, "label": i} for i in ids]}
+        # scope "workspace": the list was filtered by the key's OpenRouter workspace (see ai_client)
+        return {"source": "live", "scope": getattr(ids, "scope", ""), "models": [{"id": i, "label": i} for i in ids]}
     except Exception as e:
         return {"source": "fallback", "error": str(e)[:300], "models": _fallback_models(url)}
 

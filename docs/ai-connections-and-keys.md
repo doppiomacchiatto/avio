@@ -80,6 +80,10 @@ When you pick **OpenRouter**, Settings asks **"Where should your prompts be proc
 
 In EU and US, a model that OpenRouter hasn't made available in that region fails with an error instead of running somewhere else. The model list in Settings shows what the region offers. All three addresses use the same OpenRouter key, so switching region keeps your saved key.
 
+**Avio runs against the OpenRouter workspace that owns your API key.** Every OpenRouter key belongs to one workspace, and that workspace's guardrails (plus your account's privacy settings) decide what the key may do. Avio can't see or change them. To use a different workspace, add another connection with a key created in that workspace, for example one connection per workspace.
+
+For OpenRouter connections, the **Model** list is read from OpenRouter's `/models/user` endpoint with your key, so it shows only the models that workspace allows, for the region you picked. The note under the list reads "N models your OpenRouter workspace allows". If that can't be read, Avio falls back to OpenRouter's ordinary list; if the workspace allows nothing, it says so.
+
 **Set up your OpenRouter guardrails to match what you choose here.** At openrouter.ai, open **Workspaces → Default → Guardrails** (a guardrail does nothing until it is the workspace default or is assigned to your key) and check:
 
 - **Data regions** includes the region you chose in Avio. If the guardrail allows only US and Avio is on Global, every request is refused with a 403.

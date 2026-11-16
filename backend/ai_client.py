@@ -416,7 +416,7 @@ def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Option
     explanation of what happened and what to do; every other error keeps its original text,
     except an error reported mid-stream, which now surfaces instead of passing as a finish."""
     p = _error_parts(exc)
-    if p["status"] == 403 and r and (urlparse(r.base_url).hostname or "").endswith("openrouter.ai"):
+    if p["status"] == 403 and r and _is_openrouter(r.base_url):
         return _openrouter_403_message(p, r, model)
     if p["status"] != 429:
         if isinstance(exc, ProviderStreamError):
@@ -426,7 +426,7 @@ def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Option
 
     host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
     model = model or (r.model if r else "") or ""
-    openrouter = host.endswith("openrouter.ai")
+    openrouter = bool(r) and _is_openrouter(r.base_url)
     openai_host = host.endswith("openai.com")
     wait = _human_wait(_retry_seconds(p["headers"]))
     low = f"{p['message']} {p['raw']} {p['code'] or ''}".lower()
@@ -486,6 +486,7 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
     """
     url = (base_url or "").strip() or _load_base_url()
     key = (api_key or "").strip()
+    scope = ""
     if not key and url.rstrip("/") == OPENCODE_GATEWAY_URL.rstrip("/"):
         # OpenCode's model catalog is public: it answers a request with no Authorization header
         # (and rejects a made-up key), so list it without one. The full list then shows as soon
@@ -496,8 +497,24 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
         # key falls back to the saved one, which is the normal "just refresh" case.
         kwargs = _client_kwargs(key, url)
         kwargs.update(timeout=10.0, max_retries=0)
-        raw_ids = [m.id for m in openai.OpenAI(**kwargs).models.list().data]
-    ids = []
+        raw_ids = None
+        if _is_openrouter(url):
+            # An OpenRouter key belongs to a workspace, and the workspace's guardrails (plus the
+            # account's privacy settings and the region of this address) decide what it may use.
+            # /models/user lists exactly that, so the dropdown never offers a model that would be
+            # refused. If it can't be read, fall back to the ordinary list below.
+            try:
+                raw_ids = _fetch_openrouter_workspace_models(url, kwargs["api_key"])
+                scope = "workspace"
+            except Exception:
+                raw_ids = None
+            if raw_ids is not None and not raw_ids:
+                raise RuntimeError("Your OpenRouter workspace allows no models. Check its guardrails "
+                                   "(allowed models and providers) and your account privacy settings.")
+        if raw_ids is None:
+            raw_ids = [m.id for m in openai.OpenAI(**kwargs).models.list().data]
+    ids = ModelIds()
+    ids.scope = scope
     for rid in raw_ids:
         mid = rid.removeprefix("models/")   # Gemini prefixes ids with "models/"
         if not any(h in mid.lower() for h in _NON_CHAT_HINTS):
@@ -505,6 +522,28 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
     if "anthropic.com" not in url:
         ids.sort(key=str.lower)   # Anthropic already returns newest first
     return ids
+
+
+class ModelIds(list):
+    """Model ids from fetch_models, plus where the list came from: scope "workspace" when OpenRouter
+    filtered it by the key's workspace guardrails, account privacy settings and region."""
+    scope: str = ""
+
+
+def _is_openrouter(url: str) -> bool:
+    """openrouter.ai or one of its subdomains (the eu. and us. regional addresses); not lookalikes."""
+    host = (urlparse(url or "").hostname or "").lower()
+    return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+
+def _fetch_openrouter_workspace_models(url: str, api_key: str) -> list[str]:
+    """GET <url>/models/user with the key: the models this key's workspace may actually use."""
+    import urllib.request
+    req = urllib.request.Request(url.rstrip("/") + "/models/user",
+                                 headers={"Authorization": f"Bearer {api_key}", "User-Agent": "Avio"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
 
 
 def _fetch_public_model_ids(url: str) -> list[str]:

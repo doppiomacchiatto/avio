@@ -258,7 +258,7 @@ export default function App() {
       });
       setAvailModels(d.models || []);
       setModelsNote(d.source === "live"
-        ? `${(d.models || []).length} models from your provider`
+        ? `${(d.models || []).length} models ${d.scope === "workspace" ? "your OpenRouter workspace allows" : "from your provider"}`
         : `Couldn't fetch models — showing built-in list${d.error ? ` (${d.error.split("\n")[0]})` : ""}`);
       debugLog(`models: ${d.source}${d.error ? ` — ${d.error}` : ` (${(d.models || []).length})`}`, d.source === "live" ? "done" : "warn");
     } catch (e) {
@@ -1111,9 +1111,12 @@ export default function App() {
                         : "This URL is not one of the three regions."}
                     </p>
                     <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
-                      <strong>Set up your guardrails to match.</strong> In OpenRouter, open <em>Workspaces → Default → Guardrails</em> and make
-                      sure <em>Data regions</em> includes <strong>{activeRegion?.label || "this region"}</strong>, and that the allowed models and
-                      providers fit what you pick here. If they don't agree, OpenRouter rejects every request with a 403.
+                      <strong>Avio runs against the OpenRouter workspace that owns your API key.</strong> That workspace's guardrails, and your
+                      account's privacy settings, decide what is allowed. Avio can't see or change them, so set them in OpenRouter
+                      (<em>Workspaces → your workspace → Guardrails</em>) to agree with this choice: <em>Data regions</em> must include{" "}
+                      <strong>{activeRegion?.label || "this region"}</strong>. If they don't, OpenRouter refuses every request with a 403.
+                      The model list below shows only what the workspace allows. To use a different workspace, add another connection
+                      with a key from that workspace.
                     </p>
                   </div>
                 )}
