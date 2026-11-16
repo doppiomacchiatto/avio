@@ -228,7 +228,9 @@ def _load_file_url(base_url: str, rel_path: str, use_cache: bool = True) -> Opti
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             content = resp.read().decode("utf-8")
-            content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()
+            if _is_markdown(rel_path):      # HTML comments are markdown noise; leave code files as they are
+                content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+            content = content.strip()
     except urllib.error.HTTPError as e:
         # Optional reference files are probed by name, so a 404 is expected.
         (log.debug if e.code == 404 else log.warning)("sf_skills: HTTP %s for %s", e.code, url)
@@ -251,34 +253,74 @@ _FALLBACK_REFS = [
     "references/examples.md",
 ]
 _MAX_DISCOVERED_REFS = 40
-_MD_LINK_RE = re.compile(r"\]\(\s*<?([^)\s>#]+\.md)(?:#[^)\s]*)?>?\s*\)", re.IGNORECASE)
+
+# Skills link more than markdown: Apex templates, query samples, metadata files. Those are fetched
+# and injected too, but only when SKILL.md links to them (the author's own reference list), so a
+# skill with a big assets/ folder does not send all of it. Scripts (.py, .sh) are never included.
+_ASSET_EXTS = ("cls", "trigger", "apex", "soql", "xml", "json", "yaml", "yml", "txt", "js", "html", "css")
+_REF_EXT = "(?:md|" + "|".join(_ASSET_EXTS) + ")"
+_MAX_ASSET_CHARS = 30_000          # per non-markdown file; larger ones are skipped
+_MD_LINK_RE = re.compile(r"\]\(\s*<?([^)\s>#]+\." + _REF_EXT + r")(?:#[^)\s]*)?>?\s*\)", re.IGNORECASE)
 _MD_BARE_RE = re.compile(
-    r"(?<![\w/.\\-])((?:references|resources|docs|templates|examples|assets)/[\w./-]+\.md)",
+    r"(?<![\w/.\\-])((?:references|resources|docs|templates|examples|assets)/[\w./-]+\." + _REF_EXT + r")(?![\w-])",
     re.IGNORECASE,
 )
 
 
-def _candidate_ref_paths(skill_md: Optional[str]) -> list[str]:
-    """
-    Relative .md paths to download next to SKILL.md: every file SKILL.md links to
-    (e.g. `[...](references/foo.md)`), then the common fallback names.
-    Only plain relative paths are accepted (no URLs, absolute paths, or `..`).
-    """
+def _is_markdown(rel: str) -> bool:
+    return rel.lower().endswith(".md")
+
+
+def _linked_paths(skill_md: Optional[str]) -> list[str]:
+    """Relative paths SKILL.md links to (markdown or an allowed asset type), in order of appearance.
+    Only plain relative paths are accepted (no URLs, absolute paths, or `..`)."""
     found: list[str] = []
-    if skill_md:
-        for raw in _MD_LINK_RE.findall(skill_md) + _MD_BARE_RE.findall(skill_md):
-            p = raw.strip()
-            if "\\" in p or p.startswith(("/", "#")) or re.match(r"^[a-z][a-z0-9+.-]*:", p, re.IGNORECASE):
-                continue
-            parts = [s for s in p.split("/") if s not in ("", ".")]
-            if not parts or ".." in parts:
-                continue
-            p = "/".join(parts)
-            if p.lower() != "skill.md" and p not in found:
-                found.append(p)
-            if len(found) >= _MAX_DISCOVERED_REFS:
-                break
+    if not skill_md:
+        return found
+    for raw in _MD_LINK_RE.findall(skill_md) + _MD_BARE_RE.findall(skill_md):
+        p = raw.strip()
+        if "\\" in p or p.startswith(("/", "#")) or re.match(r"^[a-z][a-z0-9+.-]*:", p, re.IGNORECASE):
+            continue
+        parts = [s for s in p.split("/") if s not in ("", ".")]
+        if not parts or ".." in parts:
+            continue
+        p = "/".join(parts)
+        if p.lower() != "skill.md" and p not in found:
+            found.append(p)
+        if len(found) >= _MAX_DISCOVERED_REFS:
+            break
+    return found
+
+
+def _candidate_ref_paths(skill_md: Optional[str]) -> list[str]:
+    """Relative paths to download next to SKILL.md: every file SKILL.md links to
+    (e.g. `[...](references/foo.md)` or `[...](assets/template.cls)`), then the common
+    fallback markdown names."""
+    found = _linked_paths(skill_md)
     return found + [p for p in _FALLBACK_REFS if p not in found]
+
+
+_FENCE_LANG = {"cls": "apex", "trigger": "apex", "apex": "apex", "soql": "sql", "yml": "yaml"}
+
+
+def _asset_block(rel: str, content: str) -> str:
+    """A non-markdown skill file as a labelled code block, so the model knows what it is."""
+    ext = rel.rsplit(".", 1)[-1].lower()
+    return f"### Skill file: `{rel}`\n\n````{_FENCE_LANG.get(ext, ext)}\n{content.strip()}\n````"
+
+
+def _read_linked_asset(skill_dir: Path, rel: str) -> Optional[str]:
+    """Text of a linked non-markdown file inside skill_dir, or None (missing, too big, outside the
+    folder, or unreadable)."""
+    try:
+        root = skill_dir.resolve()
+        f = (skill_dir / rel).resolve()
+        if root not in f.parents or not f.is_file() or f.stat().st_size > _MAX_ASSET_CHARS * 4:
+            return None
+        text = f.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return text if text.strip() and len(text) <= _MAX_ASSET_CHARS else None
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +354,8 @@ def _load_custom_skill_context(entry: dict) -> Optional[str]:
         parts = [skill_md] if skill_md else []
         for rel in _candidate_ref_paths(skill_md):
             content = _load_file_url(base_url, rel)
-            if content:
-                parts.append(content)
+            if content and (_is_markdown(rel) or len(content) <= _MAX_ASSET_CHARS):
+                parts.append(content if _is_markdown(rel) else _asset_block(rel, content))
         if not parts:
             log.warning("sf_skills: custom skill URL returned no content: %s", base_url)
             return None
@@ -350,6 +392,10 @@ def _load_custom_skill_context(entry: dict) -> Optional[str]:
                 parts.append(content)
         except Exception as e:
             log.debug("sf_skills: custom skill read error %s — %s", md, e)
+    for rel in _linked_paths(parts[0] if parts and skill_md.exists() else ""):
+        asset = None if _is_markdown(rel) else _read_linked_asset(root, rel)
+        if asset:
+            parts.append(_asset_block(rel, asset))
 
     if not parts:
         return None
@@ -412,12 +458,7 @@ def _fetch_skill_impl(name: str, source: str) -> dict:
             src_dir = SKILLS_DIR / skill_slug
             if not src_dir.is_dir():
                 return {"ok": False, "path": str(dest), "files": 0, "error": f"'{skill_slug}' is not bundled with this version of Avio yet"}
-            for md in src_dir.rglob("*.md"):
-                rel = md.relative_to(src_dir)
-                out = dest / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(md, out)
-                files_written += 1
+            files_written = _copy_skill_dir(src_dir, dest)
 
         # ── GitHub shorthand ──────────────────────────────────────────────────
         elif source.startswith("github:"):
@@ -435,12 +476,7 @@ def _fetch_skill_impl(name: str, source: str) -> dict:
             src_dir = Path(raw).expanduser()
             if not src_dir.is_dir():
                 return {"ok": False, "path": str(dest), "files": 0, "error": f"Directory not found: {src_dir}"}
-            for md in src_dir.rglob("*.md"):
-                rel = md.relative_to(src_dir)
-                out = dest / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(md, out)
-                files_written += 1
+            files_written = _copy_skill_dir(src_dir, dest)
 
         # Write a meta file so we know the origin
         (dest / ".avio_skill_meta.json").write_text(
@@ -478,9 +514,28 @@ def _fetch_skill_from_url(base_url: str, dest: Path) -> int:
         _save("SKILL.md", skill_md)
     for rel in _candidate_ref_paths(skill_md):
         content = _load_file_url(base_url, rel, use_cache=False)
-        if content:
+        if content and (_is_markdown(rel) or len(content) <= _MAX_ASSET_CHARS):
             _save(rel, content)
     return written
+
+
+def _copy_skill_dir(src_dir: Path, dest: Path) -> int:
+    """Copy a skill folder: every markdown file, plus the non-markdown files SKILL.md links to
+    (the same set _fetch_skill_from_url downloads). Returns the number of files copied."""
+    import shutil
+    copied = 0
+    skill_md = src_dir / "SKILL.md"
+    linked = _linked_paths(skill_md.read_text(encoding="utf-8")) if skill_md.is_file() else []
+    wanted = list(src_dir.rglob("*.md")) + [
+        src_dir / rel for rel in linked
+        if not _is_markdown(rel) and _read_linked_asset(src_dir, rel) is not None
+    ]
+    for f in wanted:
+        out = dest / f.relative_to(src_dir)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, out)
+        copied += 1
+    return copied
 
 
 # Added skills are only injected when they look relevant to the conversation, and the
@@ -567,11 +622,13 @@ def _user_skills(text: str = "", mode: str = "relevant",
             continue
 
         parts = []
+        skill_text = ""
         skill_md = skill_dir / "SKILL.md"
         if skill_md.exists():
             content = _load_file_local(skill_dir, "SKILL.md")
             if content:
                 parts.append(content)
+                skill_text = content
         for md in sorted(skill_dir.rglob("*.md")):
             if md == skill_md or md.name.startswith("."):
                 continue
@@ -582,6 +639,14 @@ def _user_skills(text: str = "", mode: str = "relevant",
                     parts.append(content)
             except Exception:
                 pass
+        # Templates and samples the skill links to (assets/*.cls, ...): without them the model is
+        # told to "start from the template" and never sees it.
+        for rel in _linked_paths(skill_text):
+            if _is_markdown(rel):
+                continue
+            asset = _read_linked_asset(skill_dir, rel)
+            if asset:
+                parts.append(_asset_block(rel, asset))
         if parts:
             candidates.append((score, display, f"## {display}\n\n" + "\n\n---\n\n".join(parts)))
 
