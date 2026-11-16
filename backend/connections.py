@@ -145,7 +145,7 @@ def upsert(*, conn_id: Optional[str] = None, label: str = "", preset: str = "cus
             recs.append(existing)
         # A saved key belongs to the host it was saved for. If the URL changes and no new key is
         # supplied, drop the old one rather than send it to a different provider.
-        host_changed = ("base_url" in existing and _norm_url(existing["base_url"]) != _norm_url(base_url))
+        host_changed = ("base_url" in existing and not ai_client.same_key_scope(existing["base_url"], base_url))
         existing.update({"label": label, "preset": preset or "custom",
                          "base_url": base_url, "model": (model or "").strip()})
 
@@ -235,7 +235,7 @@ def resolve(conn_id: Optional[str] = None) -> Resolved:
     url = ov.get("base_url") or d.get("base_url", "")
     model = ov.get("model") or (d.get("model") or "").strip()
     key = ov.get("api_key") or ""
-    if not key and _norm_url(url) == _norm_url(d.get("base_url", "")):
+    if not key and ai_client.same_key_scope(url, d.get("base_url", "")):
         key = secret_store.get(_account(d_id)) or ""      # same host: the connection's key is safe to use
     # An override that points at a different host never borrows the connection's key.
     if not model:
@@ -259,7 +259,8 @@ _KEY_PREFIX_PRESETS = (("oc_sk_", "opencode"), ("sk-ant-", "anthropic"), ("sk-or
 def _preset_for(base_url: str, key: str) -> str:
     url = _norm_url(base_url)
     for p in ai_client.PROVIDER_PRESETS:
-        if p["base_url"] and _norm_url(p["base_url"]) == url:
+        urls = [p["base_url"]] + [r["base_url"] for r in p.get("regions", [])]
+        if any(u and _norm_url(u) == url for u in urls):
             return p["id"]
     if not url:
         for prefix, preset in _KEY_PREFIX_PRESETS:

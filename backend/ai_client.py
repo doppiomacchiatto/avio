@@ -241,11 +241,33 @@ PROVIDER_PRESETS = [
     {"id": "openai",     "label": "OpenAI (ChatGPT models)",          "base_url": "https://api.openai.com/v1",                                "key_hint": "sk-…"},
     {"id": "anthropic",  "label": "Anthropic (Claude)",               "base_url": "https://api.anthropic.com/v1",                             "key_hint": "sk-ant-…"},
     {"id": "google",     "label": "Google (Gemini)",                  "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",  "key_hint": "AIza…"},
-    {"id": "openrouter", "label": "OpenRouter (Llama and many more)", "base_url": "https://openrouter.ai/api/v1",                             "key_hint": "sk-or-…"},
+    {"id": "openrouter", "label": "OpenRouter (Llama and many more)", "base_url": "https://openrouter.ai/api/v1",
+     # Where requests are processed. EU and US need OpenRouter's Business or Enterprise plan, and an
+     # account guardrail can restrict which of these addresses it accepts.
+     "regions": [
+         {"id": "global", "label": "Global", "base_url": "https://openrouter.ai/api/v1"},
+         {"id": "eu",     "label": "EU",     "base_url": "https://eu.openrouter.ai/api/v1"},
+         {"id": "us",     "label": "US",     "base_url": "https://us.openrouter.ai/api/v1"},
+     ],
+     "key_hint": "sk-or-…"},
     {"id": "groq",       "label": "Groq (Llama, fast)",               "base_url": "https://api.groq.com/openai/v1",                           "key_hint": "gsk_…"},
     {"id": "ollama",     "label": "Ollama (local Llama)",             "base_url": "http://localhost:11434/v1",                                "key_hint": "not needed", "needs_key": False},
     {"id": "custom",     "label": "Custom gateway",                   "base_url": "",                                                         "key_hint": "your gateway key"},
 ]
+
+def same_key_scope(a: str, b: str) -> bool:
+    """Whether a key saved for URL `a` may be sent to URL `b`: the same URL, or two regions of one
+    provider's own preset (OpenRouter's global, EU and US addresses are one service and one key,
+    so switching region keeps the key). Any other pair of URLs is a different provider."""
+    na, nb = (a or "").strip().rstrip("/"), (b or "").strip().rstrip("/")
+    if na == nb:
+        return True
+    for p in PROVIDER_PRESETS:
+        urls = {r["base_url"].rstrip("/") for r in p.get("regions", [])}
+        if na in urls and nb in urls:
+            return True
+    return False
+
 
 _NON_CHAT_HINTS = ("embed", "whisper", "tts", "dall-e", "moderation", "davinci", "babbage",
                    "transcribe", "realtime", "rerank", "image", "audio")
@@ -358,11 +380,44 @@ def _error_parts(exc: Exception) -> dict:
             "headers": getattr(resp, "headers", None)}
 
 
+_OR_REGION_NAMES = {"openrouter.ai": "Global", "eu.openrouter.ai": "EU", "us.openrouter.ai": "US"}
+_OR_GUARDRAILS = "openrouter.ai → Workspaces → Default → Guardrails"
+
+
+def _openrouter_403_message(p: dict, r: "Resolved", model: Optional[str]) -> str:
+    """OpenRouter answers 403 when an account guardrail refuses a request: a data region that does not
+    include the address Avio used, or a model, provider or spending rule. Say which, and that Avio's
+    settings and the guardrail have to agree."""
+    host = urlparse(r.base_url).hostname or "openrouter.ai"
+    region = _OR_REGION_NAMES.get(host, host)
+    msg = p["message"] or ""
+    parts = [f"OpenRouter refused this request (403) for {model or r.model}."]
+    m = re.search(r"hostnames?:\s*([\w.\-]+(?:\s*,\s*[\w.\-]+)*)", msg, re.IGNORECASE)
+    if "data region" in msg.lower() or m:
+        allowed = [h.strip().rstrip(".").lower() for h in m.group(1).split(",")] if m else []
+        names = [_OR_REGION_NAMES.get(h, h) for h in allowed]
+        parts.append(f"Your OpenRouter guardrail only accepts requests through {' or '.join(names) or 'other regions'}"
+                     f", but this connection sends them through the {region} address ({host}).")
+        parts.append("Fix it either way: in ⚙ Settings → AI Model, set this connection's OpenRouter region to "
+                     f"{' or '.join(names) or 'an allowed one'}; or add {region} under Data regions in the guardrail "
+                     f"({_OR_GUARDRAILS}).")
+    else:
+        parts.append("This is almost always an account guardrail refusing the request: the model or provider may not "
+                     "be on its allowlist, or a spending limit or data policy applies.")
+        parts.append(f"Make the guardrail match Avio's settings ({_OR_GUARDRAILS}): allow this model, and include the "
+                     f"{region} region that this connection uses.")
+    if msg:
+        parts.append(f'OpenRouter said: "{_clip(msg)}"')
+    return "\n\n".join(parts)
+
+
 def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Optional[str] = None) -> str:
     """The text shown in the AI panel for a failed request. Rate limits (429) get a plain
     explanation of what happened and what to do; every other error keeps its original text,
     except an error reported mid-stream, which now surfaces instead of passing as a finish."""
     p = _error_parts(exc)
+    if p["status"] == 403 and r and (urlparse(r.base_url).hostname or "").endswith("openrouter.ai"):
+        return _openrouter_403_message(p, r, model)
     if p["status"] != 429:
         if isinstance(exc, ProviderStreamError):
             code = f" (code {p['status']})" if p["status"] else ""

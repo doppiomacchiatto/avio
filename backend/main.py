@@ -35,7 +35,7 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, StreamFinish, describe_error, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+from ai_client import AIClient, StreamFinish, describe_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
 import connections
 import org_login
 import secret_store
@@ -223,7 +223,7 @@ def post_models(req: ModelsRequest):
             url = url or c["base_url"]
             # The stored key only goes to the connection's own host, never to a URL typed in
             # while editing (that would hand the key to a different provider).
-            if not key and connections._norm_url(url) == connections._norm_url(c["base_url"]):
+            if not key and same_key_scope(url, c["base_url"]):
                 key = connections.key_for(conn_id) or ""
         ids = fetch_models(key or None, url or None)
         if not ids:
