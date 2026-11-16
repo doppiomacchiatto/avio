@@ -263,6 +263,8 @@ Under **⚙ Settings → AI Model**, each **AI connection** is one saved provide
 
 **To set one up:** get an API key from your provider's console, open ⚙ Settings → AI Model → *＋ New connection…*, pick the provider, paste the key, choose a model and Save. A chat subscription isn't an API key: ChatGPT Plus and a Claude Pro/Max or Claude Code login can't be used.
 
+**OpenRouter:** choosing it asks where prompts should be processed (Global, EU or US; EU and US need OpenRouter's Business or Enterprise plan). Set your OpenRouter **guardrails** (Workspaces → Default → Guardrails: data regions, allowed models and providers) to match, or OpenRouter refuses requests with a 403, which Avio explains. Details in the guide below.
+
 **How keys are used and stored, in short:**
 
 - Keys live in your **operating system's keystore** (Windows Credential Manager, macOS Keychain, Linux Secret Service), not in `config.json`, which only holds each connection's name, URL and model.

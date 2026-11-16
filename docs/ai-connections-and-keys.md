@@ -68,6 +68,26 @@ If the model you want is not in the list (a brand-new model, or one the provider
 
 The first connection you save becomes the default (marked ★). The key goes straight into your system keystore and is never shown again; afterwards you only see "key saved" and its last four characters.
 
+### OpenRouter: choose a region, and match your guardrails
+
+When you pick **OpenRouter**, Settings asks **"Where should your prompts be processed?"** with three choices:
+
+| Region | Address | Notes |
+|---|---|---|
+| **Global** (default) | `openrouter.ai` | OpenRouter picks any region. |
+| **EU** | `eu.openrouter.ai` | Prompts processed only in Europe (EU/EEA, UK, Switzerland). Needs OpenRouter's **Business or Enterprise** plan. |
+| **US** | `us.openrouter.ai` | Prompts processed only in the US. Same plan requirement. |
+
+In EU and US, a model that OpenRouter hasn't made available in that region fails with an error instead of running somewhere else. The model list in Settings shows what the region offers. All three addresses use the same OpenRouter key, so switching region keeps your saved key.
+
+**Set up your OpenRouter guardrails to match what you choose here.** At openrouter.ai, open **Workspaces → Default → Guardrails** (a guardrail does nothing until it is the workspace default or is assigned to your key) and check:
+
+- **Data regions** includes the region you chose in Avio. If the guardrail allows only US and Avio is on Global, every request is refused with a 403.
+- The **model** and **provider** allowlists include the models you want to use. To limit yourself to US developers' models, allow only those models; a provider allowlist alone does not do that, because US hosts also serve models from elsewhere.
+- Any **privacy** rules (data collection, zero data retention) and **spending limits** are what you expect.
+
+When OpenRouter refuses a request because of a guardrail, Avio says so, and for a region mismatch it names the regions the guardrail allows. Fix it by changing the region in Settings or by adding it to the guardrail.
+
 ### Local models (Ollama, LM Studio)
 
 No key is needed. Choose **Ollama (local Llama)**, or enter your server's URL (for example `http://localhost:11434/v1`), pick a model you have pulled, and Save. Notes:
@@ -187,6 +207,7 @@ How overrides combine: a panel with a specific connection chosen **ignores** ove
 | **"No model is chosen for connection 'X'"** | Pick a model in Settings and Save. |
 | **401 / "Incorrect API key"** from the provider | The key is wrong, expired or belongs to another provider. Paste the right key. |
 | **"Rate limited (429) by …"** | The provider is limiting you. The message says why and what to do, and quotes the provider's own reason. A billing 429 (OpenAI `insufficient_quota`) means no credit: add credit on the provider's billing page, because a ChatGPT subscription doesn't cover the API. On **OpenRouter free models** (ids ending `:free`) the limits are strict (20 requests a minute; 50 a day, or 1,000 a day once you have bought $10 of credit) and the free provider is often busy: wait, or pick the same model without `:free`. Otherwise wait the time shown and retry. Avio's Salesforce guidance makes each message large, which counts toward token limits; **⚙ Settings → Skills** can switch it off for a test. |
+| **"OpenRouter refused this request (403)"** | An OpenRouter guardrail blocked it. The message says whether it was the **data region** (the guardrail does not allow the region this connection uses; it lists the ones it does) or a model, provider or spending rule. Make the guardrail and Avio agree: change the connection's region in ⚙ Settings, or edit the guardrail at **Workspaces → Default → Guardrails**. See "OpenRouter: choose a region". |
 | **"The provider stopped the reply with an error"** | The provider reported a problem after it had started answering (OpenRouter does this). Earlier versions ended such a reply silently and looked like a short answer. Retry; the message includes the provider's reason. |
 | **404 "model … not found"** | That model isn't available to your key, or the id you typed under "Other" is misspelled. Click **↻ Refresh list** and choose one from it. |
 | **"Couldn't fetch models — showing built-in list"** | The provider rejected the key or URL, or it is unreachable. The list shown is a built-in fallback for that provider; fix the key or URL and refresh. |
