@@ -503,6 +503,7 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
             # account's privacy settings and the region of this address) decide what it may use.
             # /models/user lists exactly that, so the dropdown never offers a model that would be
             # refused. If it can't be read, fall back to the ordinary list below.
+            _check_openrouter_key(url, kwargs["api_key"])      # raises a plain message for a bad key / refused region
             try:
                 raw_ids = _fetch_openrouter_workspace_models(url, kwargs["api_key"])
                 scope = "workspace"
@@ -534,6 +535,35 @@ def _is_openrouter(url: str) -> bool:
     """openrouter.ai or one of its subdomains (the eu. and us. regional addresses); not lookalikes."""
     host = (urlparse(url or "").hostname or "").lower()
     return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+
+def _check_openrouter_key(url: str, api_key: str) -> None:
+    """Confirm OpenRouter accepts this key on this address, before its model list is called "the
+    workspace's". /models/user answers an unknown or mistyped key with the ordinary unfiltered list
+    instead of an error, so without this check a wrong key would show "N models your workspace
+    allows". GET /key rejects a bad key (401), and a guardrail that does not allow this region
+    address refuses it (403), which is better learned here than on the first chat message.
+    Raises RuntimeError with a plain message for those two; other failures (network, 5xx) are
+    ignored and the caller falls back to the ordinary list."""
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(url.rstrip("/") + "/key",
+                                 headers={"Authorization": f"Bearer {api_key}", "User-Agent": "Avio"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 403):
+            return
+        try:
+            msg = str(json.loads(e.read().decode("utf-8")).get("error", {}).get("message", ""))
+        except Exception:
+            msg = ""
+        if e.code == 401:
+            raise RuntimeError("OpenRouter rejected this API key (401). Check that it is correct and has not been revoked.")
+        raise RuntimeError(_openrouter_403_message({"message": msg}, Resolved(url, "", ""), None))
+    except Exception:
+        return
 
 
 def _fetch_openrouter_workspace_models(url: str, api_key: str) -> list[str]:

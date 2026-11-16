@@ -82,7 +82,7 @@ In EU and US, a model that OpenRouter hasn't made available in that region fails
 
 **Avio runs against the OpenRouter workspace that owns your API key.** Every OpenRouter key belongs to one workspace, and that workspace's guardrails (plus your account's privacy settings) decide what the key may do. Avio can't see or change them. To use a different workspace, add another connection with a key created in that workspace, for example one connection per workspace.
 
-For OpenRouter connections, the **Model** list is read from OpenRouter's `/models/user` endpoint with your key, so it shows only the models that workspace allows, for the region you picked. The note under the list reads "N models your OpenRouter workspace allows". If that can't be read, Avio falls back to OpenRouter's ordinary list; if the workspace allows nothing, it says so.
+For OpenRouter connections, the **Model** list is read from OpenRouter's `/models/user` endpoint with your key, so it shows only the models that workspace allows, for the region you picked. The note under the list reads "N models your OpenRouter workspace allows". Avio first checks your key with OpenRouter, so a wrong or revoked key, or an address your guardrail refuses (for example Global when the guardrail allows only US), is reported right there in Settings instead of on your first message. If the list can't be read for another reason, Avio falls back to OpenRouter's ordinary list; if the workspace allows nothing, it says so.
 
 **Set up your OpenRouter guardrails to match what you choose here.** At openrouter.ai, open **Workspaces → Default → Guardrails** (a guardrail does nothing until it is the workspace default or is assigned to your key) and check:
 
