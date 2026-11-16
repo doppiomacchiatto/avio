@@ -87,6 +87,7 @@ avio/
 | Area | Routes |
 |---|---|
 | App & health | `/api/health`, `/api/sf-version`, `/api/shutdown`, `/api/settings`, `/api/open_file` |
+| Org login | `/api/org-login` (start / status), `/api/org-login/options`, `/api/org-login/cancel` |
 | Orgs & metadata | `/api/orgs`, `…/objects`, `…/fields`, `…/profiles`, `…/permsets`, `…/fls`, `…/limits`, `…/api-version`, `…/security-settings` |
 | Validation rules | `…/validation-rules` (list, toggle, restore snapshot) |
 | Query & execute | `/api/soql`, `/api/soql/history`, `/api/apex`, `…/rest` (REST proxy) |
@@ -227,6 +228,34 @@ npx tauri build
 | Linux | `$XDG_DATA_HOME/avio/` (default `~/.local/share/avio/`) |
 
 AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
+
+## Logging in to a Salesforce org
+
+Avio uses the orgs your `sf` CLI is already logged in to. If there are none, the org picker shows a login panel instead of an error: choose **Production** or **Sandbox / test** and click **Log in with browser**. Avio runs
+
+```
+sf org login web --instance-url <login URL> --alias <alias>
+```
+
+and the page continues by itself once you finish in the browser (there is a Cancel button, and a 5-minute limit). The same panel opens from **＋ Log in to another org** under the org list, so you can add an org without a terminal. Avio never sees your password; the CLI keeps the session as usual.
+
+| Choice | Login URL | Alias |
+|---|---|---|
+| Production | `https://login.salesforce.com` | `avio-prod` |
+| Sandbox / test | `https://test.salesforce.com` | `avio-dev` |
+
+**Airgapped or special environments** (a private login host, government or other isolated instances): override either URL in `config.json` (see "User data"). Only `https://` URLs are accepted; anything else is ignored and the default is used.
+
+```json
+{
+  "org_login_urls": {
+    "production": "https://login.example.mil",
+    "test": "https://test.example.mil"
+  }
+}
+```
+
+The panel shows the URL it will use (marked "from your config" when overridden) and, under "Prefer a terminal, or the browser can't open?", the exact command to run yourself, plus a **Check for orgs** button. The alias is fixed per type, so logging in a second time as the same type re-points that alias to the new login. To keep both, log in with the CLI under your own alias.
 
 ## AI connections and API keys
 
