@@ -851,7 +851,7 @@ export default function App() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">How it works</p>
                   <div className="flex flex-col gap-2">
                     {[
-                      ["🔐", "Authentication", "Avio never stores your Salesforce credentials. It uses the sessions you've already authenticated with the sf CLI — run sf org login web to add a new org."],
+                      ["🔐", "Authentication", "Avio never stores your Salesforce credentials. It uses the sessions you've already authenticated with the sf CLI. With none yet, Avio can start the sf browser login for you; or run sf org login web yourself."],
                       ["📡", "Data flow", "All Salesforce data stays on your machine. The backend calls the sf CLI, which calls Salesforce's REST API, then returns the result to the frontend. Nothing is sent to any third-party server."],
                       ["🤖", "OpenCode AI", "AI features connect to the OpenCode gateway (or any OpenAI-compatible provider) using the API key in Settings. Org metadata is included in the prompt only when you actively use an AI feature."],
                       ["📦", "Bundled runtime", "The Python backend is compiled into a self-contained binary by PyInstaller — no Python installation required on the end-user machine."],
@@ -918,7 +918,8 @@ export default function App() {
                     <div className="flex flex-col gap-1">
                       <p className="font-semibold text-gray-800 dark:text-white text-sm">Authenticated Org <span className="text-red-500 text-xs font-bold ml-1">Required</span></p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                        At least one Salesforce org must be authenticated with the CLI before launching Avio.
+                        At least one Salesforce org must be authenticated with the CLI. If none is, Avio's org picker offers a
+                        <strong> Log in with browser</strong> button (Production or Sandbox / test). Or authenticate yourself:
                       </p>
                       <div className="mt-1 flex flex-col gap-1">
                         <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Authenticate:</p>

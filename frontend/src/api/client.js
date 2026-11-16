@@ -58,6 +58,11 @@ export async function api(path, opts = {}) {
   }
 }
 
+// Same as api() without the debug-log entries, for polling loops.
+export function apiQuiet(path, opts = {}) {
+  return apiRaw(path, opts);
+}
+
 /**
  * Resolve once the backend answers /api/health. Never rejects and never shows an
  * error: the backend may still be starting, or restarting after "Restart Backend".
