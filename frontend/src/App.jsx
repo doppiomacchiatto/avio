@@ -216,13 +216,27 @@ export default function App() {
   }, [settingsOpen]);
 
   const normUrl = (u) => (u || "").trim().replace(/\/+$/, "");
+  // A provider owns its preset URL and, for OpenRouter, the regional addresses too.
+  const providerUrls = (p) => [p.base_url, ...(p.regions || []).map((r) => r.base_url)].filter(Boolean).map(normUrl);
   const activeProvider =
-    providers.find((p) => p.base_url && normUrl(p.base_url) === normUrl(settingsDraft.base_url))
+    providers.find((p) => providerUrls(p).includes(normUrl(settingsDraft.base_url)))
     || (settingsDraft.base_url ? providers.find((p) => p.id === "custom") : null);
+  const activeRegion = activeProvider?.regions?.find((r) => normUrl(r.base_url) === normUrl(settingsDraft.base_url)) || null;
+  // Mirrors the backend's same_key_scope: a saved key follows a switch between one provider's regions.
+  const sameKeyScope = (a, b) =>
+    normUrl(a) === normUrl(b) || providers.some((p) => p.regions && providerUrls(p).includes(normUrl(a)) && providerUrls(p).includes(normUrl(b)));
+
+  function pickRegion(url) {
+    const next = { ...settingsDraft, base_url: url };
+    setSettingsDraft(next);
+    refreshModels(next);          // the model list differs per region (EU and US list only what runs there)
+  }
 
   function pickProvider(id) {
     const p = providers.find((x) => x.id === id);
-    const base_url = p ? (p.id === "custom" ? settingsDraft.base_url : p.base_url) : "";
+    // Re-picking a provider keeps the region the user already chose (OpenRouter's EU/US addresses).
+    const keepUrl = p && providerUrls(p).includes(normUrl(settingsDraft.base_url));
+    const base_url = p ? (p.id === "custom" || keepUrl ? settingsDraft.base_url : p.base_url) : "";
     // A different provider means the old model id (and its model list) no longer applies.
     const changed = normUrl(base_url) !== normUrl(settingsDraft.base_url);
     const next = { ...settingsDraft, base_url, model: changed ? "" : settingsDraft.model };
@@ -258,7 +272,7 @@ export default function App() {
   const editingConn = connections.find((c) => c.id === editingId) || null;
   // A saved key belongs to the provider it was saved for. If the URL has been changed, the old
   // key is not reused (the backend drops it on save), so a new one must be entered.
-  const keyReusable = !!editingConn?.key_set && normUrl(editingConn.base_url) === normUrl(settingsDraft.base_url);
+  const keyReusable = !!editingConn?.key_set && sameKeyScope(editingConn.base_url, settingsDraft.base_url);
 
   // Refresh the list here and for every open AI panel (via the shared cache in connections.js).
   async function reloadConnections() {
@@ -1068,6 +1082,41 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+
+                {activeProvider?.regions && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-3">
+                    <span className="font-medium text-gray-700 dark:text-gray-300">Where should your prompts be processed?</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {activeProvider.regions.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => pickRegion(r.base_url)}
+                          className={`px-2 py-2 rounded-lg border-2 text-center transition-colors ${
+                            activeRegion?.id === r.id
+                              ? "border-blue-600 bg-white dark:bg-gray-800"
+                              : "border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-500"
+                          }`}
+                        >
+                          <div className="font-medium text-gray-900 dark:text-white">{r.label}</div>
+                          <div className="text-[10px] text-gray-400 font-mono break-all">{new URL(r.base_url).hostname}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                      {activeRegion?.id === "global"
+                        ? "Global lets OpenRouter pick any region."
+                        : activeRegion
+                        ? `${activeRegion.label} processes prompts only in that region, and needs OpenRouter's Business or Enterprise plan. A model that isn't available there fails instead of running elsewhere.`
+                        : "This URL is not one of the three regions."}
+                    </p>
+                    <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                      <strong>Set up your guardrails to match.</strong> In OpenRouter, open <em>Workspaces → Default → Guardrails</em> and make
+                      sure <em>Data regions</em> includes <strong>{activeRegion?.label || "this region"}</strong>, and that the allowed models and
+                      providers fit what you pick here. If they don't agree, OpenRouter rejects every request with a 403.
+                    </p>
+                  </div>
+                )}
 
                 <label className="flex flex-col gap-1">
                   <span className="font-medium text-gray-700 dark:text-gray-300">
