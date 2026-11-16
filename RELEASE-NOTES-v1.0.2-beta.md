@@ -62,8 +62,8 @@ Get-FileHash .\Avio_1.0.2_x64-setup.exe -Algorithm SHA256
 
 | File | SHA-256 |
 |---|---|
-| `Avio_1.0.2_x64-setup.exe` | `82999525c9f7238505640232404cc7925090bf7166490cc673f61031be1e3442` |
-| `Avio_1.0.2_x64_en-US.msi` | `f983c522b02d495dbee2425aa455f534ea956f73b1db9b10787993909a052874` |
+| `Avio_1.0.2_x64-setup.exe` | `be2d9ff2766c785a84c711a0a9ddb6f45d428ed4512c73c32179590a132bdddf` |
+| `Avio_1.0.2_x64_en-US.msi` | `94568bdf80d6711721239fb0344e3b5ec8212a2e0e9481e7e7d8b42d733d9b1f` |
 
 ## Upgrading
 
