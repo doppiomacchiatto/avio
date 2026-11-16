@@ -272,7 +272,7 @@ Be concise and direct. No need to repeat the question.`;
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700">
         <span className="text-sm font-semibold text-white flex items-center gap-1.5">
-          ✨ <span>OpenCode AI</span>
+          ✨ <span>AI</span>
         </span>
         <div className="flex items-center gap-2">
           <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} />
@@ -348,7 +348,7 @@ Be concise and direct. No need to repeat the question.`;
           <div className="text-xs text-slate-300">
             <div className="flex items-center gap-2">
               <Spinner label="" />
-              <span>OpenCode is thinking…</span>
+              <span>Thinking…</span>
             </div>
             <SkillsUsed skills={streamSkills} dark />
             <SlowHint dark />
@@ -394,7 +394,7 @@ Be concise and direct. No need to repeat the question.`;
         <div className="flex gap-2 items-end">
           <textarea
             className="flex-1 min-h-[36px] max-h-32 text-xs font-sans border border-slate-600 rounded-lg px-3 py-2 bg-slate-800 text-slate-50 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none leading-5"
-            placeholder="Ask OpenCode about your Apex code…"
+            placeholder="Ask AI about your Apex code…"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -575,7 +575,7 @@ export default function ApexRunner({ org, onApiCall }) {
                 ? "bg-violet-700 hover:bg-violet-800 text-white border-violet-600"
                 : "bg-gray-100 dark:bg-gray-700 hover:bg-violet-50 dark:hover:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700"
             }`}
-            title="Toggle OpenCode AI assistant"
+            title="Toggle AI assistant"
           >
             ✨ AI
           </button>

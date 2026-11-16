@@ -23,7 +23,7 @@ const TABS = [
   { id: "apex",     label: "🏃 Apex Runner"         },
   { id: "health",   label: "🏥 Health"              },
   { id: "rest",     label: "🔬 REST Explorer"       },
-  { id: "claude",   label: "🤖 OpenCode"            },
+  { id: "claude",   label: "🤖 AI Chat"             },
 ];
 
 export default function App() {
@@ -777,7 +777,7 @@ export default function App() {
                     ["⚙️", "Apex Runner",          "Execute and iterate anonymous Apex"],
                     ["🏥", "Org Health",           "35 checks across 7 categories"],
                     ["🔬", "REST Explorer",        "Browse any Salesforce REST endpoint"],
-                    ["🤖", "OpenCode AI",          "Natural language Salesforce help"],
+                    ["🤖", "AI Chat",              "Natural language Salesforce help"],
                   ].map(([icon, name, desc]) => (
                     <div key={name} className="flex gap-2 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
                       <span className="shrink-0 text-base">{icon}</span>
@@ -830,7 +830,7 @@ export default function App() {
                       <span className="text-xl shrink-0">⚙️</span>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-800 dark:text-white text-sm">Backend <span className="font-normal text-gray-500 dark:text-gray-400 text-xs ml-1">Python · FastAPI · uvicorn</span></p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Runs as a bundled binary on a random local port. Handles Salesforce CLI calls, Excel exports, SOQL, Apex execution, and OpenCode AI requests.</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Runs as a bundled binary on a random local port. Handles Salesforce CLI calls, Excel exports, SOQL, Apex execution, and AI requests.</p>
                       </div>
                     </div>
                     {/* Arrow */}
@@ -853,7 +853,7 @@ export default function App() {
                     {[
                       ["🔐", "Authentication", "Avio never stores your Salesforce credentials. It uses the sessions you've already authenticated with the sf CLI. With none yet, Avio can start the sf browser login for you; or run sf org login web yourself."],
                       ["📡", "Data flow", "All Salesforce data stays on your machine. The backend calls the sf CLI, which calls Salesforce's REST API, then returns the result to the frontend. Nothing is sent to any third-party server."],
-                      ["🤖", "OpenCode AI", "AI features connect to the OpenCode gateway (or any OpenAI-compatible provider) using the API key in Settings. Org metadata is included in the prompt only when you actively use an AI feature."],
+                      ["🤖", "AI Chat", "AI features connect to the provider you choose in Settings (OpenAI, Claude, OpenRouter, OpenCode, a local model, or any OpenAI-compatible URL) using that connection's key. Org metadata is included in the prompt only when you actively use an AI feature."],
                       ["📦", "Bundled runtime", "The Python backend is compiled into a self-contained binary by PyInstaller — no Python installation required on the end-user machine."],
                     ].map(([icon, title, desc]) => (
                       <div key={title} className="flex gap-3 text-xs">
@@ -928,13 +928,13 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* OpenCode API key */}
+                  {/* AI connection */}
                   <div className="flex gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                     <span className="text-xl shrink-0">🤖</span>
                     <div className="flex flex-col gap-1">
-                      <p className="font-semibold text-gray-800 dark:text-white text-sm">OpenCode API Key <span className="text-yellow-500 text-xs font-bold ml-1">Optional</span></p>
+                      <p className="font-semibold text-gray-800 dark:text-white text-sm">AI connection <span className="text-yellow-500 text-xs font-bold ml-1">Optional</span></p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                        Required only for the OpenCode tab, SOQL AI assist, and Apex AI assistant. Configure via <strong>⚙ Settings</strong> in the toolbar or in <code>opencode.config.json</code>.
+                        Required only for the AI Chat tab and the AI panels in the SOQL and Apex Runners. Add a connection (OpenAI, Claude, OpenRouter, a local model and more) via <strong>⚙ Settings</strong> in the toolbar.
                       </p>
                     </div>
                   </div>
