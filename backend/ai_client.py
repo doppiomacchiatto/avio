@@ -348,7 +348,9 @@ def _error_parts(exc: Exception) -> dict:
         (body if isinstance(body, dict) else {})
     meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
     resp = getattr(exc, "response", None)
-    return {"status": getattr(exc, "status_code", None),
+    # A stream chunk carrying an "error" object makes the SDK raise a plain APIError, which has no
+    # HTTP status (the 200 was already sent); the status is the error object's own numeric code.
+    return {"status": getattr(exc, "status_code", None) or _as_int(err.get("code")),
             "message": str(err.get("message") or getattr(exc, "message", "") or ""),
             "code": err.get("code") or getattr(exc, "code", None),
             "provider": meta.get("provider_name"),
