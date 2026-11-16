@@ -9,6 +9,11 @@ import { api, apiStream } from "../api/client";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
+import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
+import ConnectionPicker from "../components/ConnectionPicker";
+import { useConnectionChoice } from "../connections";
+import { useSessionState } from "../sessionStore";
 
 const PAGE_SIZE = 50;
 
@@ -22,10 +27,14 @@ const QUICK_CHIPS = [
 ];
 
 function AiPanel({ query, results, onInsert, onClose }) {
-  const [messages,  setMessages]  = useState([]);
-  const [input,     setInput]     = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [streamBuf, setStreamBuf] = useState("");
+  // The conversation lives in the session store, not in this component: switching tabs unmounts it.
+  const [messages,  setMessages]  = useSessionState("soql.ai.messages", []);
+  const [input,     setInput]     = useSessionState("soql.ai.input", "");
+  const [streaming, setStreaming] = useSessionState("soql.ai.streaming", false);
+  const [streamBuf, setStreamBuf] = useSessionState("soql.ai.streamBuf", "");
+  const [truncated, setTruncated] = useSessionState("soql.ai.truncated", false);   // last reply hit the token limit
+  const conn = useConnectionChoice("soql");              // which saved AI connection this panel uses
+  const [streamSkills, setStreamSkills] = useSessionState("soql.ai.streamSkills", null); // skills the backend injected into the current reply
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -60,34 +69,28 @@ Be concise and direct.`;
     setInput("");
     setStreaming(true);
     setStreamBuf("");
+    setTruncated(false);
+    setStreamSkills(null);
     let fullText = "";
+    let skills = null;
 
     await apiStream(
       "/api/claude/chat",
-      { messages: newMessages, system: buildSystem() },
+      // Always give the model the SOQL skill here: the panel is SOQL by definition, and a prompt
+      // like "open opportunities over 100000" has none of the keywords that detection looks for.
+      { messages: newMessages, system: buildSystem(), force_skills: ["platform-soql-query"],
+        connection: conn.selected || undefined },
       (delta) => { fullText += delta; setStreamBuf(fullText); },
-      () => { setMessages(prev => [...prev, { role: "assistant", content: fullText }]); setStreaming(false); setStreamBuf(""); },
+      () => { setMessages(prev => [...prev, { role: "assistant", content: fullText, skills }]); setStreaming(false); setStreamBuf(""); setStreamSkills(null); },
       (err) => {
-        const isNoKey = err.includes("No Anthropic API key");
-        setMessages(prev => [...prev, { role: "assistant", content: isNoKey
-          ? "🔑 No API key configured. Click **⚙ Settings** in the top bar."
+        setMessages(prev => [...prev, { role: "assistant", content: /No API key/i.test(err)
+          ? `🔑 ${err}`
           : `⚠ Error: ${err}` }]);
         setStreaming(false); setStreamBuf("");
       },
+      () => setTruncated(true),   // the model hit its token limit mid-answer
+      (names) => { skills = names; setStreamSkills(names); },   // skills the backend really injected
     );
-  }
-
-  function parseBlocks(text) {
-    const parts = [];
-    const re = /```(?:soql|sql|apex|javascript)?\n?([\s\S]*?)```/g;
-    let last = 0, m;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) parts.push({ type: "text", content: text.slice(last, m.index) });
-      parts.push({ type: "code", content: m[1].trimEnd() });
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) parts.push({ type: "text", content: text.slice(last) });
-    return parts;
   }
 
   function AssistantMessage({ content }) {
@@ -98,9 +101,11 @@ Be concise and direct.`;
         ) : (
           <div key={i} className="relative group">
             <pre className="text-xs font-mono bg-gray-950 border border-gray-700 rounded p-3 overflow-x-auto text-green-300 leading-5">{b.content}</pre>
-            <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => onInsert(b.content)} className="px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">→ Use Query</button>
-            </div>
+            {isLang(b.lang, SOQL_LANGS) && (
+              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => onInsert(b.content)} className="px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">→ Use Query</button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -110,10 +115,11 @@ Be concise and direct.`;
   return (
     <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700">
       <div className="shrink-0 flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700">
-        <span className="text-sm font-semibold text-white">✨ OpenCode AI</span>
+        <span className="text-sm font-semibold text-white">✨ AI</span>
         <div className="flex items-center gap-2">
+          <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} />
           {messages.length > 0 && (
-            <button onClick={() => { setMessages([]); setStreamBuf(""); }} className="text-xs text-slate-300 hover:text-red-400">🗑 Clear</button>
+            <button onClick={() => { setMessages([]); setStreamBuf(""); setTruncated(false); }} className="text-xs text-slate-300 hover:text-red-400">🗑 Clear</button>
           )}
           <button onClick={onClose} className="text-slate-300 hover:text-white text-sm">✕</button>
         </div>
@@ -133,7 +139,7 @@ Be concise and direct.`;
       <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-4 min-h-0">
         {messages.length === 0 && !streaming && (
           <div className="text-xs text-slate-300 text-center pt-6 leading-relaxed px-2">
-            Ask OpenCode to write or explain a SOQL query.<br/>
+            Ask AI to write or explain a SOQL query.<br/>
             <span className="text-slate-400">Your current query and results are sent as context.</span>
           </div>
         )}
@@ -141,15 +147,20 @@ Be concise and direct.`;
           <div key={i} className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
             {msg.role === "user"
               ? <div className="max-w-[90%] bg-blue-600 text-white text-xs px-3 py-2 rounded-2xl rounded-tr-sm">{msg.content}</div>
-              : <div className="w-full"><AssistantMessage content={msg.content} /></div>
+              : <div className="w-full"><AssistantMessage content={msg.content} /><SkillsUsed skills={msg.skills} dark /></div>
             }
           </div>
         ))}
-        {streaming && streamBuf && <div className="w-full"><AssistantMessage content={streamBuf} /></div>}
+        {streaming && streamBuf && <div className="w-full"><AssistantMessage content={streamBuf} /><SkillsUsed skills={streamSkills} dark /></div>}
         {streaming && !streamBuf && (
-          <div className="flex items-center gap-2 text-xs text-slate-300">
-            <Spinner label="" /><span>OpenCode is thinking…</span>
+          <div className="text-xs text-slate-300">
+            <div className="flex items-center gap-2"><Spinner label="" /><span>Thinking…</span></div>
+            <SkillsUsed skills={streamSkills} dark />
+            <SlowHint dark />
           </div>
+        )}
+        {truncated && !streaming && (
+          <TruncatedNotice dark onContinue={() => sendMessage(CONTINUE_PROMPT)} />
         )}
         <div ref={bottomRef} />
       </div>
@@ -159,7 +170,7 @@ Be concise and direct.`;
         <div className="flex gap-2 items-end">
           <textarea
             className="flex-1 min-h-[36px] max-h-32 text-xs border border-slate-600 rounded-lg px-3 py-2 bg-slate-800 text-slate-50 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none leading-5"
-            placeholder="Ask OpenCode about your SOQL query…"
+            placeholder="Ask AI about your SOQL query…"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
@@ -187,7 +198,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   const [historyOpen, setHistoryOpen]= useState(true);
   const [debugLog,    setDebugLog]   = useState([]);
   const [debugOpen,   setDebugOpen]  = useState(false);
-  const [aiOpen,      setAiOpen]     = useState(false);
+  const [aiOpen,      setAiOpen]     = useSessionState("soql.ai.open", false);   // stays open when you return to this tab
 
   // SObject browser — reads from shared ctx
   const objects    = ctx?.objects || [];
@@ -413,7 +424,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
                   ? "bg-violet-700 hover:bg-violet-800 text-white border-violet-600"
                   : "bg-gray-100 dark:bg-gray-700 hover:bg-violet-50 dark:hover:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-violet-300 dark:border-violet-700"
               }`}
-              title="Toggle OpenCode AI"
+              title="Toggle AI assistant"
             >
               ✨ AI
             </button>

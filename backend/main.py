@@ -6,13 +6,17 @@ or defaults to 7891.
 """
 from __future__ import annotations
 
+import hmac
+import logging
 import os
+import re
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -31,11 +35,27 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, PROVIDER_PRESETS, fetch_models, needs_key, save_config, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
-from sf_skills import augment_system, get_skills_manifest, fetch_skill
+from ai_client import AIClient, StreamFinish, describe_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+import connections
+import org_login
+import secret_store
+from sf_skills import augment_system, augment_with_skills, get_skills_manifest, fetch_skill
 from platform_env import avio_data_dir
 
-app = FastAPI(title="Avio", version="2.0.0")
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Move a pre-connections plain-text API key into the OS keystore (once, only when serving).
+    try:
+        connections.migrate_legacy()
+    except Exception as e:
+        log.warning("API key migration skipped: %s", type(e).__name__)
+    yield
+
+
+app = FastAPI(title="Avio", version="2.0.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,6 +65,27 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=False,
 )
+
+# Per-launch API token. The Tauri shell generates a random token, gives it to this process
+# (AVIO_API_TOKEN) and to the WebView; every /api call must carry it. Without it any web page
+# or local program could call this loopback API and spend the saved AI credits. Unset (dev
+# mode, `npm run dev:backend`) means open, as before. CORS stays permissive on purpose: the
+# WebView origin differs per OS (tauri://localhost, http://tauri.localhost, the Vite dev
+# server) and the token, which other origins cannot know, is the access control.
+_API_TOKEN = os.environ.get("AVIO_API_TOKEN", "").strip()
+_OPEN_PATHS = {"/api/health", "/openapi.json"}          # health is polled before the token is known
+
+
+@app.middleware("http")
+async def _require_token(request: Request, call_next):
+    path = request.url.path
+    if (_API_TOKEN and request.method != "OPTIONS"       # CORS preflights carry no credentials
+            and path not in _OPEN_PATHS
+            and not path.startswith(("/docs", "/redoc"))):
+        supplied = request.headers.get("authorization", "")
+        if not hmac.compare_digest(supplied.encode(), f"Bearer {_API_TOKEN}".encode()):
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
 
 def _session_expired_response(exc: SessionExpiredError) -> JSONResponse:
     return JSONResponse(
@@ -85,6 +126,8 @@ AVAILABLE_MODELS = [
     {"id": "gpt-5.4-mini",              "label": "GPT 5.4 Mini      — OpenCode, low cost"},
     {"id": "deepseek-v4.1-flash",       "label": "DeepSeek V4.1 Flash — OpenCode, low cost"},
     # OpenAI
+    {"id": "gpt-5-mini",                "label": "GPT-5 mini      — OpenAI reasoning, fast and low cost"},
+    {"id": "gpt-4.1-mini",              "label": "GPT-4.1 mini    — OpenAI, fast and low cost"},
     {"id": "gpt-4o",                    "label": "GPT-4o          — OpenAI flagship, fast and capable"},
     {"id": "gpt-4o-mini",               "label": "GPT-4o mini     — OpenAI lightweight, low cost"},
     {"id": "o3",                        "label": "o3              — OpenAI reasoning model"},
@@ -110,25 +153,40 @@ class SettingsRequest(BaseModel):
 def get_settings():
     cfg    = _load_config()
     legacy = _load_legacy_config()
-    # Mask key: return whether one exists, not the value
-    key_set = False
-    try:
-        _load_api_key()
-        key_set = True
-    except Exception:
-        pass
-    # Surface the effective base_url (avio config takes priority, then legacy)
-    effective_url = cfg.get("base_url", "").strip() or legacy.get("base_url", "").strip()
-    if not needs_key(effective_url):
-        key_set = True   # local servers (Ollama etc.) run without a key
+    conns  = connections.list_connections()
+    default_id = connections.default_id()
+    default = next((c for c in conns if c["id"] == default_id), None)
+    if default is not None:
+        # Connections era: model/URL/key status come from the default connection.
+        effective_url = default["base_url"]
+        key_set = default["key_set"] or not default["requires_key"]
+        model = default["model"]
+        key_source = secret_store.status()["kind"] if default["key_set"] else "none"
+    else:
+        # No connections yet: the old single-key setup (never returns the key itself).
+        key_set = False
+        try:
+            _load_api_key()
+            key_set = True
+        except Exception:
+            pass
+        effective_url = cfg.get("base_url", "").strip() or legacy.get("base_url", "").strip()
+        if not needs_key(effective_url):
+            key_set = True   # local servers (Ollama etc.) run without a key
+        model = cfg.get("model", "")
+        key_source = "avio" if API_KEY_PATH.exists() else ("legacy" if legacy.get("api_key") else "none")
     return {
         "key_set":        key_set,
         "providers":      PROVIDER_PRESETS,
-        "model":          cfg.get("model", ""),
+        "model":          model,
         "base_url":       effective_url,
         "models":         AVAILABLE_MODELS,
-        "key_source":     "avio" if API_KEY_PATH.exists() else
-                          ("legacy" if legacy.get("api_key") else "none"),
+        "key_source":     key_source,
+        # Saved connections (metadata and key status only; never a key)
+        "connections":        conns,
+        "default_connection": default_id or "",
+        "secret_storage":     secret_store.status(),
+        "dev_override":       has_dev_override(),
         # Theme
         "theme":          cfg.get("theme", "system"),
         # Skills config
@@ -140,35 +198,67 @@ def get_settings():
     }
 
 class ModelsRequest(BaseModel):
-    api_key:  Optional[str] = None
-    base_url: Optional[str] = None
+    api_key:    Optional[str] = None
+    base_url:   Optional[str] = None
+    connection: Optional[str] = None   # use this saved connection's URL and key unless overridden
 
 @app.post("/api/models")
 def post_models(req: ModelsRequest):
-    """Live model list from the configured provider; falls back to the built-in list.
+    """Live model list from a provider; falls back to the built-in list.
 
-    Accepts unsaved key/base_url from the Settings form so the picker can refresh before saving.
+    Uses, in order: unsaved key/base_url from the Settings form, the named saved connection,
+    the default connection, then the legacy single-key setup. A typed key beats a stored one,
+    so a connection can be re-tested before saving.
     """
+    url = (req.base_url or "").strip()
     try:
-        ids = fetch_models(req.api_key, req.base_url)
+        key = (req.api_key or "").strip()
+        conn_id = req.connection
+        if not conn_id and not url and not key and not has_dev_override():
+            conn_id = connections.default_id()          # plain refresh: the default connection
+        if conn_id:
+            c = connections.get_connection(conn_id)
+            if c is None:
+                raise RuntimeError("That connection no longer exists.")
+            url = url or c["base_url"]
+            # The stored key only goes to the connection's own host, never to a URL typed in
+            # while editing (that would hand the key to a different provider).
+            if not key and same_key_scope(url, c["base_url"]):
+                key = connections.key_for(conn_id) or ""
+        ids = fetch_models(key or None, url or None)
         if not ids:
             raise RuntimeError("provider returned no models")
-        return {"source": "live", "models": [{"id": i, "label": i} for i in ids]}
+        # scope "workspace": the list was filtered by the key's OpenRouter workspace (see ai_client)
+        return {"source": "live", "scope": getattr(ids, "scope", ""), "models": [{"id": i, "label": i} for i in ids]}
     except Exception as e:
-        return {"source": "fallback", "error": str(e)[:300], "models": AVAILABLE_MODELS}
+        return {"source": "fallback", "error": str(e)[:300], "models": _fallback_models(url)}
+
+
+def _fallback_models(url: str) -> list:
+    """The built-in model list narrowed to the provider at `url`, for when the live list could
+    not be fetched. The full list mixes vendors, so showing it for OpenAI offered Claude ids."""
+    u = (url or "").lower()
+    if "api.openai.com" in u:
+        return [m for m in AVAILABLE_MODELS if re.match(r"(gpt-|o\d)", m["id"])]
+    if "anthropic.com" in u:
+        return [m for m in AVAILABLE_MODELS if m["id"].startswith("claude-")]
+    if any(h in u for h in ("localhost", "127.0.0.1", "[::1]")):
+        return []                       # a local server's models are whatever you pulled
+    return AVAILABLE_MODELS
+
 
 @app.post("/api/settings")
 def post_settings(req: SettingsRequest):
-    # Persist API key to ~/.avio_api_key
-    if req.api_key is not None:
-        key_path = API_KEY_PATH
-        if req.api_key.strip():
-            key_path.write_text(req.api_key.strip())
-        # Blank key = don't overwrite existing
-    # Persist model + base_url + skills config
+    # Older clients still post a single api_key/model/base_url: store them on the default
+    # connection (creating one) instead of writing a plain-text key file.
+    if (req.api_key or "").strip() or req.model or req.base_url:
+        try:
+            _apply_single_key_fields(req)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    # Theme + skills config (model/base_url now live on connections, so leave them alone)
     save_config(
-        model=req.model or "",
-        base_url=req.base_url if req.base_url is not None else "",
+        base_url=None,
         theme=req.theme,
         skills_enabled=req.skills_enabled,
         skills_source=req.skills_source,
@@ -176,8 +266,87 @@ def post_settings(req: SettingsRequest):
         skills_url=req.skills_url,
         custom_skills=req.custom_skills,
     )
-    # Force the AI client to rebuild with new settings on next call
-    _ai._client = None
+    _ai.invalidate()
+    return {"ok": True}
+
+
+def _apply_single_key_fields(req: "SettingsRequest") -> None:
+    d_id = connections.default_id()
+    cur = connections.get_connection(d_id) if d_id else None
+    key = (req.api_key or "").strip()
+    base_url = (req.base_url or (cur["base_url"] if cur else "")).strip()
+    preset = cur["preset"] if cur and not req.base_url else connections._preset_for(base_url, key)
+    if not base_url:
+        base_url = next((p["base_url"] for p in PROVIDER_PRESETS if p["id"] == preset and p["base_url"]),
+                        "https://api.openai.com/v1")   # no saved URL: the SDK default host
+    connections.upsert(
+        conn_id=cur["id"] if cur else None,
+        label=cur["label"] if cur else "", preset=preset, base_url=base_url,
+        model=req.model or (cur["model"] if cur else ""),
+        api_key=key or None, make_default=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Connections: saved provider setups (keys live in the OS keystore, never in responses)
+# ---------------------------------------------------------------------------
+
+class ConnectionBody(BaseModel):
+    id:           Optional[str] = None    # omit to create
+    label:        str = ""
+    preset:       str = "custom"
+    base_url:     str = ""
+    model:        str = ""
+    api_key:      Optional[str] = None    # blank/None keeps the stored key
+    clear_key:    bool = False
+    make_default: bool = False
+
+class ConnectionIdBody(BaseModel):
+    id: str
+
+
+@app.get("/api/ai/connections")
+def list_connections_route():
+    return {
+        "connections": connections.list_connections(),
+        "default":     connections.default_id() or "",
+        "storage":     secret_store.status(),
+        "presets":     PROVIDER_PRESETS,
+    }
+
+
+@app.post("/api/ai/connections")
+def save_connection_route(body: ConnectionBody):
+    try:
+        conn = connections.upsert(
+            conn_id=body.id or None, label=body.label, preset=body.preset, base_url=body.base_url,
+            model=body.model, api_key=body.api_key, clear_key=body.clear_key,
+            make_default=body.make_default)
+    except connections.UnknownConnection:
+        raise HTTPException(404, "That connection no longer exists.")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _ai.invalidate()
+    return {"ok": True, "connection": conn, "storage": secret_store.status()}
+
+
+# POST aliases: the desktop client only sends GET and POST.
+@app.post("/api/ai/connections/delete")
+def delete_connection_route(body: ConnectionIdBody):
+    try:
+        connections.delete(body.id)
+    except connections.UnknownConnection:
+        raise HTTPException(404, "That connection no longer exists.")
+    _ai.invalidate()
+    return {"ok": True, "default": connections.default_id() or ""}
+
+
+@app.post("/api/ai/connections/default")
+def default_connection_route(body: ConnectionIdBody):
+    try:
+        connections.set_default(body.id)
+    except connections.UnknownConnection:
+        raise HTTPException(404, "That connection no longer exists.")
     return {"ok": True}
 
 
@@ -261,6 +430,37 @@ def get_orgs():
         return {"orgs": [{"alias": a or u, "username": u, "isDefault": d} for a, u, d in orgs]}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# First-run login through the sf CLI (see org_login.py). The page names the org type only.
+class OrgLoginRequest(BaseModel):
+    type: str   # "production" | "test"
+
+@app.get("/api/org-login/options")
+def org_login_options():
+    return {"options": org_login.login_options()}
+
+@app.get("/api/org-login")
+def org_login_status():
+    return org_login.status()
+
+@app.post("/api/org-login")
+def org_login_start(req: OrgLoginRequest):
+    try:
+        job = org_login.start(req.type)
+        return {**job, "command": org_login.command_text(req.type)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Could not start the login: {e}")
+
+@app.post("/api/org-login/cancel")
+def org_login_cancel():
+    return org_login.cancel()
 
 # ---------------------------------------------------------------------------
 # Objects
@@ -656,17 +856,41 @@ class ChatRequest(BaseModel):
     org_context: Optional[dict] = None
     model:       Optional[str]  = None   # override from settings
     force_skills: Optional[list[str]] = None   # skills to inject regardless of keywords
+    connection:  Optional[str]  = None         # saved connection id (see /api/ai/connections); default if omitted
+
+
+def _sse_error(message: str) -> StreamingResponse:
+    """A one-event stream the UI shows like any other AI error."""
+    return StreamingResponse(iter([f"data: {json.dumps({'error': message})}\n\n"]),
+                             media_type="text/event-stream")
+
 
 @app.post("/api/ai/chat")
 def ai_chat(req: ChatRequest):
-    augmented_system = augment_system(req.system, req.messages, req.force_skills)
+    try:
+        resolved = connections.resolve(req.connection)
+    except connections.UnknownConnection:
+        return _sse_error("The selected connection no longer exists. Pick another one in the AI panel, "
+                          "or add it again in ⚙ Settings.")
+    except RuntimeError as e:      # no key / no model chosen
+        return _sse_error(str(e))
+    # Local models (Ollama etc.) have small context windows: send a condensed skill summary.
+    augmented_system, skill_names = augment_with_skills(req.system, req.messages, req.force_skills,
+                                                        local=resolved.local)
     def _stream():
         try:
-            for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None):
+            # Tell the UI which skills were really injected (first event, even when none).
+            yield f"data: {json.dumps({'skills': skill_names})}\n\n"
+            for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None,
+                                    resolved=resolved):
+                if isinstance(chunk, StreamFinish):
+                    if chunk.truncated:   # the model hit its token limit mid-answer
+                        yield f"data: {json.dumps({'truncated': True})}\n\n"
+                    continue
                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': describe_error(e, resolved, req.model or resolved.model)})}\n\n"
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 # Keep old path as alias for backwards compatibility during migration

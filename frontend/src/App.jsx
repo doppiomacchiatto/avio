@@ -10,7 +10,8 @@ import OrgHealth from "./pages/OrgHealth";
 import RestExplorer from "./pages/RestExplorer";
 import DebugLogModal from "./components/DebugLogModal";
 import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
-import { api, waitForBackend, isTauri, openExternal } from "./api/client";
+import { api, waitForBackend, isTauri, openExternal, isLocalUrl } from "./api/client";
+import { loadConnections } from "./connections";
 import { debugLog, useDebugLog } from "./debugLog";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,7 +23,7 @@ const TABS = [
   { id: "apex",     label: "🏃 Apex Runner"         },
   { id: "health",   label: "🏥 Health"              },
   { id: "rest",     label: "🔬 REST Explorer"       },
-  { id: "claude",   label: "🤖 OpenCode"            },
+  { id: "claude",   label: "🤖 AI Chat"             },
 ];
 
 export default function App() {
@@ -96,7 +97,7 @@ export default function App() {
   }
 
   // ── App version (read from Tauri at startup) ───────────────────────────────
-  const [appVersion, setAppVersion] = useState("1.0.1");
+  const [appVersion, setAppVersion] = useState("1.0.2");
   useEffect(() => {
     if (isTauri()) {
       import("@tauri-apps/api/app").then(({ getVersion }) =>
@@ -157,9 +158,17 @@ export default function App() {
   const [providers,     setProviders]     = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsNote,    setModelsNote]    = useState("");
+  const [modelCustom,   setModelCustom]   = useState(false);   // typing a model id that the provider's list lacks
   const [settingsSaved, setSettingsSaved] = useState("");   // "" | "saved" | "error:<msg>"
-  const [settingsKeySet,setSettingsKeySet]= useState(false);
-  const [settingsKeySource, setSettingsKeySource] = useState("none"); // "avio"|"legacy"|"none"
+  // Saved AI connections: provider + URL + model, with the API key held in the OS keystore.
+  const [connections,   setConnections]   = useState([]);
+  const [defaultConn,   setDefaultConn]   = useState("");
+  const [editingId,     setEditingId]     = useState("");     // "" = a new, unsaved connection
+  const [connLabel,     setConnLabel]     = useState("");
+  const [keyStorage,    setKeyStorage]    = useState(null);   // { kind, label, secure }
+  const [devOverride,   setDevOverride]   = useState(false);  // opencode.config.json / OPENCODE_* in effect
+  const [connNote,      setConnNote]      = useState("");     // result of the last connection action
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Fetch current settings when modal opens
   useEffect(() => {
@@ -176,8 +185,21 @@ export default function App() {
       });
       setAvailModels(d.models || []);
       setProviders(d.providers || []);
-      setSettingsKeySet(d.key_set || false);
-      setSettingsKeySource(d.key_source || "none");
+      const conns = d.connections || [];
+      const cur = conns.find((c) => c.id === d.default_connection);
+      setConnections(conns);
+      setDefaultConn(d.default_connection || "");
+      setEditingId(cur ? cur.id : "");
+      setConnLabel(cur ? cur.label : "");
+      setKeyStorage(d.secret_storage || null);
+      setDevOverride(!!d.dev_override);
+      setConnNote("");
+      setConfirmDelete(false);
+      if (!cur) {
+        // First run: start the editor on a new OpenAI connection.
+        const openai = (d.providers || []).find((p) => p.id === "openai");
+        if (openai && !d.base_url) setSettingsDraft((s) => ({ ...s, base_url: openai.base_url }));
+      }
       setSkillsTest(null);
       setSettingsTab("model");
       // Pre-load skills catalog in background so it's ready when user opens Skills tab
@@ -188,35 +210,55 @@ export default function App() {
       setAddSkillOpen(false);
       setAddSkillPath("");
       setAddSkillName("");
-      if (d.key_set) refreshModels({ base_url: d.base_url || "" });
+      if (cur) refreshModels({ base_url: cur.base_url }, cur.id);
+      else if (d.key_set) refreshModels({ base_url: d.base_url || "" }, "");
     }).catch(() => {});
   }, [settingsOpen]);
 
   const normUrl = (u) => (u || "").trim().replace(/\/+$/, "");
+  // A provider owns its preset URL and, for OpenRouter, the regional addresses too.
+  const providerUrls = (p) => [p.base_url, ...(p.regions || []).map((r) => r.base_url)].filter(Boolean).map(normUrl);
   const activeProvider =
-    providers.find((p) => p.base_url && normUrl(p.base_url) === normUrl(settingsDraft.base_url))
+    providers.find((p) => providerUrls(p).includes(normUrl(settingsDraft.base_url)))
     || (settingsDraft.base_url ? providers.find((p) => p.id === "custom") : null);
+  const activeRegion = activeProvider?.regions?.find((r) => normUrl(r.base_url) === normUrl(settingsDraft.base_url)) || null;
+  // Mirrors the backend's same_key_scope: a saved key follows a switch between one provider's regions.
+  const sameKeyScope = (a, b) =>
+    normUrl(a) === normUrl(b) || providers.some((p) => p.regions && providerUrls(p).includes(normUrl(a)) && providerUrls(p).includes(normUrl(b)));
+
+  function pickRegion(url) {
+    const next = { ...settingsDraft, base_url: url };
+    setSettingsDraft(next);
+    refreshModels(next);          // the model list differs per region (EU and US list only what runs there)
+  }
 
   function pickProvider(id) {
     const p = providers.find((x) => x.id === id);
-    const base_url = p ? (p.id === "custom" ? settingsDraft.base_url : p.base_url) : "";
-    const next = { ...settingsDraft, base_url };
+    // Re-picking a provider keeps the region the user already chose (OpenRouter's EU/US addresses).
+    const keepUrl = p && providerUrls(p).includes(normUrl(settingsDraft.base_url));
+    const base_url = p ? (p.id === "custom" || keepUrl ? settingsDraft.base_url : p.base_url) : "";
+    // A different provider means the old model id (and its model list) no longer applies.
+    const changed = normUrl(base_url) !== normUrl(settingsDraft.base_url);
+    const next = { ...settingsDraft, base_url, model: changed ? "" : settingsDraft.model };
+    if (changed) { setAvailModels([]); setModelCustom(false); }
     setSettingsDraft(next);
     if (p && p.id !== "custom") refreshModels(next);
   }
 
   // Ask the backend for the provider's live model list (uses unsaved form values if given)
-  async function refreshModels(draft = settingsDraft) {
+  async function refreshModels(draft = settingsDraft, connectionId = editingId) {
     setModelsLoading(true);
     setModelsNote("");
     try {
       const d = await api("/api/models", {
         method: "POST",
-        body: JSON.stringify({ api_key: draft.api_key || null, base_url: draft.base_url || null }),
+        // With a saved connection the backend uses its stored key (only for its own host);
+        // a key typed into the form wins, so a connection can be re-tested before saving.
+        body: JSON.stringify({ api_key: draft.api_key || null, base_url: draft.base_url || null, connection: connectionId || null }),
       });
       setAvailModels(d.models || []);
       setModelsNote(d.source === "live"
-        ? `${(d.models || []).length} models from your provider`
+        ? `${(d.models || []).length} models ${d.scope === "workspace" ? "your OpenRouter workspace allows" : "from your provider"}`
         : `Couldn't fetch models — showing built-in list${d.error ? ` (${d.error.split("\n")[0]})` : ""}`);
       debugLog(`models: ${d.source}${d.error ? ` — ${d.error}` : ` (${(d.models || []).length})`}`, d.source === "live" ? "done" : "warn");
     } catch (e) {
@@ -226,14 +268,133 @@ export default function App() {
     }
   }
 
+  // ── Saved AI connections ──────────────────────────────────────────────────
+  const editingConn = connections.find((c) => c.id === editingId) || null;
+  // A saved key belongs to the provider it was saved for. If the URL has been changed, the old
+  // key is not reused (the backend drops it on save), so a new one must be entered.
+  const keyReusable = !!editingConn?.key_set && sameKeyScope(editingConn.base_url, settingsDraft.base_url);
+
+  // Refresh the list here and for every open AI panel (via the shared cache in connections.js).
+  async function reloadConnections() {
+    const d = await loadConnections();
+    if (d) {
+      setConnections(d.connections || []);
+      setDefaultConn(d.default || "");
+      setKeyStorage(d.storage || null);
+    }
+    return d;
+  }
+
+  function pickConnection(id) {
+    setConfirmDelete(false);
+    setConnNote("");
+    setModelCustom(false);
+    if (id === "__new__") {
+      const openai = providers.find((p) => p.id === "openai");
+      setEditingId("");
+      setConnLabel("");
+      const fresh = { ...settingsDraft, api_key: "", model: "", base_url: openai?.base_url || "" };
+      setSettingsDraft(fresh);
+      setAvailModels([]);            // drop the previous connection's list (it was another provider's models)
+      refreshModels(fresh, "");
+      return;
+    }
+    const c = connections.find((x) => x.id === id);
+    if (!c) return;
+    setEditingId(c.id);
+    setConnLabel(c.label);
+    const next = { ...settingsDraft, api_key: "", model: c.model || "", base_url: c.base_url };
+    setSettingsDraft(next);
+    refreshModels(next, c.id);
+  }
+
+  async function makeDefaultConnection() {
+    try {
+      await api("/api/ai/connections/default", { method: "POST", body: JSON.stringify({ id: editingId }) });
+      await reloadConnections();
+      setConnNote("This is now the default connection.");
+    } catch (e) { setConnNote(`Error: ${e.message.split("\n")[0]}`); }
+  }
+
+  async function removeSavedKey() {
+    if (!editingConn) return;
+    try {
+      await api("/api/ai/connections", {
+        method: "POST",
+        body: JSON.stringify({ id: editingConn.id, label: editingConn.label, preset: editingConn.preset,
+                               base_url: editingConn.base_url, model: editingConn.model, clear_key: true }),
+      });
+      await reloadConnections();
+      setConnNote("Saved key removed.");
+    } catch (e) { setConnNote(`Error: ${e.message.split("\n")[0]}`); }
+  }
+
+  async function deleteConnection() {
+    if (!confirmDelete) { setConfirmDelete(true); return; }   // two clicks: no native confirm() in the WebView
+    try {
+      await api("/api/ai/connections/delete", { method: "POST", body: JSON.stringify({ id: editingId }) });
+      const d = await reloadConnections();
+      const next = (d?.connections || []).find((c) => c.id === d?.default) || null;
+      setConfirmDelete(false);
+      if (next) pickConnectionFrom(next, d.connections);
+      else pickConnection("__new__");
+      setConnNote("Connection deleted, and its key removed from the keystore.");
+    } catch (e) { setConnNote(`Error: ${e.message.split("\n")[0]}`); }
+  }
+
+  // Like pickConnection, for a record we just fetched (state may not have updated yet).
+  function pickConnectionFrom(c) {
+    setModelCustom(false);
+    setEditingId(c.id);
+    setConnLabel(c.label);
+    const next = { ...settingsDraft, api_key: "", model: c.model || "", base_url: c.base_url };
+    setSettingsDraft(next);
+    refreshModels(next, c.id);
+  }
+
+  // True when the connection editor holds something worth saving (so a theme-only change
+  // doesn't trip the connection validation).
+  function connectionIsDirty() {
+    if (settingsDraft.api_key.trim()) return true;
+    if (!editingConn) return !!(settingsDraft.model || connLabel.trim());
+    return settingsDraft.model !== (editingConn.model || "")
+        || settingsDraft.base_url.trim() !== editingConn.base_url
+        || connLabel.trim() !== editingConn.label;
+  }
+
+  async function saveConnection() {
+    if (!connectionIsDirty()) return;
+    const url = settingsDraft.base_url.trim();
+    if (!/^https?:\/\/\S+$/.test(url)) throw new Error("The gateway URL must start with http:// or https://");
+    if (!settingsDraft.model) throw new Error("Choose a model for this connection.");
+    if (!isLocalUrl(url) && !settingsDraft.api_key.trim() && !keyReusable) {
+      throw new Error(editingConn?.key_set
+        ? "You changed the provider URL, so paste an API key for the new provider. The saved key belongs to the old one and isn't reused."
+        : "Paste an API key for this connection. It is stored in your system keystore, not in Avio's settings files.");
+    }
+    const res = await api("/api/ai/connections", {
+      method: "POST",
+      body: JSON.stringify({
+        id:       editingId || undefined,
+        label:    connLabel.trim(),
+        preset:   activeProvider?.id || "custom",
+        base_url: url,
+        model:    settingsDraft.model,
+        api_key:  settingsDraft.api_key || null,    // blank keeps the saved key
+      }),
+    });
+    setEditingId(res.connection.id);
+    setConnLabel(res.connection.label);
+    setSettingsDraft((s) => ({ ...s, api_key: "" }));
+    await reloadConnections();
+  }
+
   async function saveSettings() {
     try {
+      await saveConnection();
       await api("/api/settings", {
         method: "POST",
         body: JSON.stringify({
-          api_key:        settingsDraft.api_key,
-          model:          settingsDraft.model,
-          base_url:       settingsDraft.base_url,
           theme:          settingsDraft.theme,
           skills_enabled: settingsDraft.skills_enabled,
           skills_source:  settingsDraft.skills_source,
@@ -535,7 +696,7 @@ export default function App() {
         {activeTab === "apex"     && <ApexRunner  org={activeOrg} onApiCall={() => fetchLimits()} />}
         {activeTab === "health"   && <OrgHealth   org={activeOrg} onApiCall={() => fetchLimits()} />}
         {activeTab === "rest"     && <RestExplorer org={activeOrg} />}
-        {activeTab === "claude"   && <ClaudeChat  org={activeOrg} ctx={orgContext} setCtx={setOrgContext} />}
+        {activeTab === "claude"   && <ClaudeChat  org={activeOrg} ctx={orgContext} setCtx={setOrgContext} loadObjects={loadObjects} />}
       </main>
 
       {/* Global footer — API limit status bar */}
@@ -630,7 +791,7 @@ export default function App() {
                     ["⚙️", "Apex Runner",          "Execute and iterate anonymous Apex"],
                     ["🏥", "Org Health",           "35 checks across 7 categories"],
                     ["🔬", "REST Explorer",        "Browse any Salesforce REST endpoint"],
-                    ["🤖", "OpenCode AI",          "Natural language Salesforce help"],
+                    ["🤖", "AI Chat",              "Natural language Salesforce help"],
                   ].map(([icon, name, desc]) => (
                     <div key={name} className="flex gap-2 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
                       <span className="shrink-0 text-base">{icon}</span>
@@ -683,7 +844,7 @@ export default function App() {
                       <span className="text-xl shrink-0">⚙️</span>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-800 dark:text-white text-sm">Backend <span className="font-normal text-gray-500 dark:text-gray-400 text-xs ml-1">Python · FastAPI · uvicorn</span></p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Runs as a bundled binary on a random local port. Handles Salesforce CLI calls, Excel exports, SOQL, Apex execution, and OpenCode AI requests.</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Runs as a bundled binary on a random local port. Handles Salesforce CLI calls, Excel exports, SOQL, Apex execution, and AI requests.</p>
                       </div>
                     </div>
                     {/* Arrow */}
@@ -704,9 +865,9 @@ export default function App() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-3">How it works</p>
                   <div className="flex flex-col gap-2">
                     {[
-                      ["🔐", "Authentication", "Avio never stores your Salesforce credentials. It uses the sessions you've already authenticated with the sf CLI — run sf org login web to add a new org."],
+                      ["🔐", "Authentication", "Avio never stores your Salesforce credentials. It uses the sessions you've already authenticated with the sf CLI. With none yet, Avio can start the sf browser login for you; or run sf org login web yourself."],
                       ["📡", "Data flow", "All Salesforce data stays on your machine. The backend calls the sf CLI, which calls Salesforce's REST API, then returns the result to the frontend. Nothing is sent to any third-party server."],
-                      ["🤖", "OpenCode AI", "AI features connect to the OpenCode gateway (or any OpenAI-compatible provider) using the API key in Settings. Org metadata is included in the prompt only when you actively use an AI feature."],
+                      ["🤖", "AI Chat", "AI features connect to the provider you choose in Settings (OpenAI, Claude, OpenRouter, OpenCode, a local model, or any OpenAI-compatible URL) using that connection's key. Org metadata is included in the prompt only when you actively use an AI feature."],
                       ["📦", "Bundled runtime", "The Python backend is compiled into a self-contained binary by PyInstaller — no Python installation required on the end-user machine."],
                     ].map(([icon, title, desc]) => (
                       <div key={title} className="flex gap-3 text-xs">
@@ -771,7 +932,8 @@ export default function App() {
                     <div className="flex flex-col gap-1">
                       <p className="font-semibold text-gray-800 dark:text-white text-sm">Authenticated Org <span className="text-red-500 text-xs font-bold ml-1">Required</span></p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                        At least one Salesforce org must be authenticated with the CLI before launching Avio.
+                        At least one Salesforce org must be authenticated with the CLI. If none is, Avio's org picker offers a
+                        <strong> Log in with browser</strong> button (Production or Sandbox / test). Or authenticate yourself:
                       </p>
                       <div className="mt-1 flex flex-col gap-1">
                         <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Authenticate:</p>
@@ -780,13 +942,13 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* OpenCode API key */}
+                  {/* AI connection */}
                   <div className="flex gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                     <span className="text-xl shrink-0">🤖</span>
                     <div className="flex flex-col gap-1">
-                      <p className="font-semibold text-gray-800 dark:text-white text-sm">OpenCode API Key <span className="text-yellow-500 text-xs font-bold ml-1">Optional</span></p>
+                      <p className="font-semibold text-gray-800 dark:text-white text-sm">AI connection <span className="text-yellow-500 text-xs font-bold ml-1">Optional</span></p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                        Required only for the OpenCode tab, SOQL AI assist, and Apex AI assistant. Configure via <strong>⚙ Settings</strong> in the toolbar or in <code>opencode.config.json</code>.
+                        Required only for the AI Chat tab and the AI panels in the SOQL and Apex Runners. Add a connection (OpenAI, Claude, OpenRouter, a local model and more) via <strong>⚙ Settings</strong> in the toolbar.
                       </p>
                     </div>
                   </div>
@@ -837,6 +999,76 @@ export default function App() {
             {/* Tab: AI Model */}
             {settingsTab === "model" && (
               <div className="flex flex-col gap-4 text-sm px-6 py-5 overflow-y-auto flex-1 min-h-0">
+                {/* Saved connections: one per provider setup; each AI panel can pick one */}
+                <div className="flex flex-col gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 p-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="font-medium text-gray-700 dark:text-gray-300">AI connection</span>
+                    <select
+                      value={editingId || "__new__"}
+                      onChange={(e) => pickConnection(e.target.value)}
+                      className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    >
+                      {connections.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}{c.id === defaultConn ? "  ★ default" : ""}{c.requires_key && !c.key_set ? "  (no key)" : ""}
+                        </option>
+                      ))}
+                      <option value="__new__">＋ New connection…</option>
+                    </select>
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                    Add one connection per provider (OpenAI, Claude, a local model…). The Apex Runner, SOQL
+                    Runner and AI Chat each let you pick which one to use.
+                  </p>
+                  {editingConn && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      {editingConn.id !== defaultConn && (
+                        <button type="button" onClick={makeDefaultConnection}
+                          className="px-2.5 py-1 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700">
+                          ★ Make default
+                        </button>
+                      )}
+                      {editingConn.key_set && (
+                        <button type="button" onClick={removeSavedKey}
+                          className="px-2.5 py-1 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700">
+                          Remove saved key
+                        </button>
+                      )}
+                      <button type="button" onClick={deleteConnection}
+                        className={`px-2.5 py-1 rounded-lg border ${confirmDelete
+                          ? "border-red-500 bg-red-600 text-white"
+                          : "border-gray-300 dark:border-gray-600 text-red-600 dark:text-red-400 hover:bg-white dark:hover:bg-gray-700"}`}>
+                        {confirmDelete ? "Click again to delete" : "Delete connection"}
+                      </button>
+                    </div>
+                  )}
+                  {connNote && <p className="text-xs text-green-600 dark:text-green-400">{connNote}</p>}
+                  {keyStorage && (
+                    <p className={`text-xs leading-relaxed ${keyStorage.secure ? "text-gray-500 dark:text-gray-400" : "text-amber-700 dark:text-amber-400"}`}>
+                      {keyStorage.secure
+                        ? <>🔒 API keys are stored in {keyStorage.label}, never in Avio's settings files.</>
+                        : <>⚠ No system keystore is available, so keys are saved in {keyStorage.label}.</>}
+                    </p>
+                  )}
+                  {devOverride && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                      A developer override (opencode.config.json or OPENCODE_* variables) is active and wins over
+                      the default connection. Choosing a connection in an AI panel bypasses it.
+                    </p>
+                  )}
+                </div>
+
+                <label className="flex flex-col gap-1">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">Connection name</span>
+                  <input
+                    type="text"
+                    placeholder={activeProvider ? activeProvider.label.split(" (")[0] : "e.g. Work OpenAI"}
+                    value={connLabel}
+                    onChange={(e) => setConnLabel(e.target.value)}
+                    className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </label>
+
                 <label className="flex flex-col gap-1">
                   <span className="font-medium text-gray-700 dark:text-gray-300">Provider</span>
                   <select
@@ -844,28 +1076,67 @@ export default function App() {
                     onChange={(e) => pickProvider(e.target.value)}
                     className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   >
-                    <option value="">Auto (OpenCode key → OpenCode, otherwise OpenAI)</option>
+                    <option value="">Choose a provider…</option>
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>{p.label}</option>
                     ))}
                   </select>
                 </label>
 
+                {activeProvider?.regions && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-3">
+                    <span className="font-medium text-gray-700 dark:text-gray-300">Where should your prompts be processed?</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {activeProvider.regions.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => pickRegion(r.base_url)}
+                          className={`px-2 py-2 rounded-lg border-2 text-center transition-colors ${
+                            activeRegion?.id === r.id
+                              ? "border-blue-600 bg-white dark:bg-gray-800"
+                              : "border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-500"
+                          }`}
+                        >
+                          <div className="font-medium text-gray-900 dark:text-white">{r.label}</div>
+                          <div className="text-[10px] text-gray-400 font-mono break-all">{new URL(r.base_url).hostname}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                      {activeRegion?.id === "global"
+                        ? "Global lets OpenRouter pick any region."
+                        : activeRegion
+                        ? `${activeRegion.label} processes prompts only in that region, and needs OpenRouter's Business or Enterprise plan. A model that isn't available there fails instead of running elsewhere.`
+                        : "This URL is not one of the three regions."}
+                    </p>
+                    <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                      <strong>Avio runs against the OpenRouter workspace that owns your API key.</strong> That workspace's guardrails, and your
+                      account's privacy settings, decide what is allowed. Avio can't see or change them, so set them in OpenRouter
+                      (<em>Workspaces → your workspace → Guardrails</em>) to agree with this choice: <em>Data regions</em> must include{" "}
+                      <strong>{activeRegion?.label || "this region"}</strong>. If they don't, OpenRouter refuses every request with a 403.
+                      The model list below shows only what the workspace allows. To use a different workspace, add another connection
+                      with a key from that workspace.
+                    </p>
+                  </div>
+                )}
+
                 <label className="flex flex-col gap-1">
                   <span className="font-medium text-gray-700 dark:text-gray-300">
                     API Key
-                    {settingsKeySet && settingsKeySource === "avio" && (
-                      <span className="ml-2 text-xs text-green-500 font-normal">✓ key saved</span>
+                    {keyReusable && (
+                      <span className="ml-2 text-xs text-green-500 font-normal">✓ key saved ({editingConn.key_hint})</span>
                     )}
-                    {settingsKeySet && settingsKeySource === "legacy" && (
-                      <span className="ml-2 text-xs text-yellow-500 font-normal">✓ using key from SOQL Explorer config</span>
+                    {editingConn?.key_set && !keyReusable && (
+                      <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 font-normal">saved key is for the old provider and won't be reused</span>
                     )}
                   </span>
                   <input
                     type="password"
+                    onBlur={() => { if (settingsDraft.api_key.trim()) refreshModels(); }}
                     placeholder={
-                      activeProvider?.needs_key === false ? "Not needed for a local server"
-                      : settingsKeySet ? "••••••••••••••••••••••••"
+                      activeProvider?.needs_key === false || isLocalUrl(settingsDraft.base_url) ? "Not needed for a local server"
+                      : keyReusable ? "Leave blank to keep the saved key"
                       : activeProvider?.key_hint || "oc_sk_… (OpenCode) or sk-… (OpenAI)"
                     }
                     value={settingsDraft.api_key}
@@ -887,6 +1158,14 @@ export default function App() {
                     onChange={(e) => setSettingsDraft((d) => ({ ...d, base_url: e.target.value }))}
                     className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs"
                   />
+                  {isLocalUrl(settingsDraft.base_url) && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                      Local model: these usually run with a small context window (Ollama defaults to
+                      4,096 tokens), so Avio sends a condensed version of its Salesforce skills. To send
+                      the full skills, raise the model's context and set <code>"skills_local_budget": -1</code> in
+                      config.json. The first request can take a minute or two while the model loads.
+                    </span>
+                  )}
                 </label>
 
                 <label className="flex flex-col gap-1">
@@ -902,18 +1181,34 @@ export default function App() {
                     </button>
                   </span>
                   <select
-                    value={settingsDraft.model}
-                    onChange={(e) => setSettingsDraft((d) => ({ ...d, model: e.target.value }))}
+                    value={modelCustom ? "__custom__" : settingsDraft.model}
+                    onChange={(e) => {
+                      if (e.target.value === "__custom__") { setModelCustom(true); return; }
+                      setModelCustom(false);
+                      setSettingsDraft((d) => ({ ...d, model: e.target.value }));
+                    }}
                     className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   >
-                    <option value="">Default (from opencode.config.json or gpt-4o)</option>
+                    <option value="">Choose a model…</option>
                     {settingsDraft.model && !availModels.some((m) => m.id === settingsDraft.model) && (
                       <option value={settingsDraft.model}>{settingsDraft.model} (current)</option>
                     )}
                     {availModels.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
+                    <option value="__custom__">✎ Other: type a model id…</option>
                   </select>
+                  {modelCustom && (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={settingsDraft.model}
+                      onChange={(e) => setSettingsDraft((d) => ({ ...d, model: e.target.value.trim() }))}
+                      placeholder="exact model id, e.g. gemini-3.5-flash"
+                      spellCheck={false}
+                      className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+                    />
+                  )}
                   {modelsNote && <span className="text-xs text-gray-400">{modelsNote}</span>}
                 </label>
 

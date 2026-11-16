@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, waitForBackend } from "../api/client";
 import Spinner from "./Spinner";
+import OrgLoginPanel from "./OrgLoginPanel";
 import { debugLog, useDebugLog } from "../debugLog";
 import DebugLogModal from "./DebugLogModal";
 
@@ -12,6 +13,7 @@ export default function OrgPickerModal({ onSelect }) {
   const [startupStatus, setStartupStatus] = useState("starting"); // "starting" | "ready" | null
   const [slowStart,     setSlowStart]     = useState(false);
   const [debugOpen,     setDebugOpen]     = useState(false);
+  const [addingOrg,     setAddingOrg]     = useState(false);   // login panel shown even though orgs exist
   const debugEntries = useDebugLog();
 
   function addLog(msg, level = "info") {
@@ -64,24 +66,33 @@ export default function OrgPickerModal({ onSelect }) {
       }
 
       // 3. Load orgs
-      addLog("Fetching orgs…", "start");
-      try {
-        const d = await api("/api/orgs");
-        const list = d.orgs || [];
-        addLog(`✅ Found ${list.length} org(s)`, "done");
-        setOrgs(list);
-        const def = list.find((o) => o.isDefault);
-        if (def) setChosen(def.alias);
-      } catch (e) {
-        addLog(`❌ ${String(e)}`, "error");
-        setError(String(e));
-      } finally {
-        setLoading(false);
-      }
+      await loadOrgs();
     }
     init();
     return () => { cancelled = true; };
   }, []);
+
+  // Fetch the CLI's orgs. `preferAlias` (a just-completed login) is selected when present,
+  // otherwise the CLI's default org.
+  async function loadOrgs(preferAlias) {
+    addLog("Fetching orgs…", "start");
+    try {
+      const d = await api("/api/orgs");
+      const list = d.orgs || [];
+      addLog(`✅ Found ${list.length} org(s)`, "done");
+      setOrgs(list);
+      setError("");
+      const pick = list.find((o) => o.alias === preferAlias) || list.find((o) => o.isDefault);
+      if (pick) setChosen(pick.alias);
+    } catch (e) {
+      addLog(`❌ ${String(e)}`, "error");
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const afterLogin = useCallback((alias) => { setAddingOrg(false); loadOrgs(alias); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function confirm() {
     const org = orgs.find((o) => o.alias === chosen);
@@ -149,9 +160,9 @@ export default function OrgPickerModal({ onSelect }) {
             {error}
           </div>
         ) : orgs.length === 0 ? (
-          <div className="text-sm text-gray-500 text-center py-4">
-            No orgs found. Run <code className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">sf org login web</code> first.
-          </div>
+          <OrgLoginPanel onLoggedIn={afterLogin} onRefresh={() => loadOrgs()} />
+        ) : addingOrg ? (
+          <OrgLoginPanel onLoggedIn={afterLogin} onRefresh={() => { setAddingOrg(false); loadOrgs(); }} onBack={() => setAddingOrg(false)} />
         ) : (
           <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
             {orgs.map((o) => (
@@ -176,17 +187,26 @@ export default function OrgPickerModal({ onSelect }) {
                 </div>
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setAddingOrg(true)}
+              className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 text-left px-1 pt-1"
+            >
+              ＋ Log in to another org
+            </button>
           </div>
         )}
 
-        {/* Confirm */}
-        <button
-          disabled={!chosen || loading}
-          onClick={confirm}
-          className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-semibold text-sm transition-colors"
-        >
-          Connect to org
-        </button>
+        {/* Confirm (the login panel has its own button) */}
+        {!(addingOrg || (!loading && !error && orgs.length === 0)) && (
+          <button
+            disabled={!chosen || loading}
+            onClick={confirm}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-semibold text-sm transition-colors"
+          >
+            Connect to org
+          </button>
+        )}
 
         {/* Debug link — always accessible even during startup */}
         <button

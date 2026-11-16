@@ -6,24 +6,39 @@ endpoint (OpenAI, Anthropic via compat layer, Azure OpenAI, local Ollama,
 custom gateways, etc.).
 
 Config priority (highest → lowest):
-  1. opencode.config.json  in project root (developer override)
+  1. opencode.config.json  in project root (developer override, git-ignored;
+     copy opencode.config.example.json to create it)
   2. OPENCODE_API_KEY / OPENCODE_BASE_URL / OPENCODE_MODEL env vars
-  3. ~/.avio_api_key   (written by Avio Settings modal)
-  4. ~/.avio_config.json  model / base_url fields
+  3. <Avio data dir>/api_key   (written by Avio Settings modal)
+  4. <Avio data dir>/config.json  model / base_url fields
   5. Legacy ~/.sf_tools_config.json  (old SOQL Explorer config)
+
+Optional config.json keys: "max_tokens" (reply limit), "skills_inject",
+"skills_local_budget" (see sf_skills.py). OPENCODE_MAX_TOKENS overrides max_tokens.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional
+from urllib.parse import urlparse
 
 import openai
 from platform_env import avio_data_dir
 
-DEFAULT_MODEL   = "gpt-4o"
-MAX_TOKENS      = 4096
+DEFAULT_MODEL    = "gpt-4o"
+# Reasoning models spend part of the limit on hidden thinking (a 4096 limit cut a Claude
+# Apex answer off mid-code), so cloud providers get a generous limit. Local servers
+# usually run with a ~4K context, so a bigger limit would not help there.
+CLOUD_MAX_TOKENS = 16384
+LOCAL_MAX_TOKENS = 4096
+# If a model rejects the limit as too large, retry with the next smaller value.
+_MAX_TOKEN_LADDER = (16384, 8192, 4096, 2048)
 
 CONFIG_PATH      = avio_data_dir() / "config.json"
 API_KEY_PATH     = avio_data_dir() / "api_key"
@@ -131,9 +146,8 @@ def _load_api_key() -> str:
     if key:
         return key
     raise RuntimeError(
-        "No AI API key found. Set OPENCODE_API_KEY env var, "
-        "add it to opencode.config.json, write it to ~/.avio_api_key, "
-        "or open ⚙ Settings."
+        "No API key is configured. Open ⚙ Settings, add an AI connection and paste your key "
+        "(or set the OPENCODE_API_KEY environment variable)."
     )
 
 
@@ -174,6 +188,51 @@ def _load_model() -> str:
     return cfg.get("model", "").strip() or DEFAULT_MODEL
 
 
+@dataclass(frozen=True)
+class Resolved:
+    """Everything needed to talk to one provider: a saved connection (see connections.py)
+    or the legacy single-key configuration."""
+    base_url: str
+    model: str
+    api_key: str
+    conn_id: Optional[str] = None
+    label: str = ""
+
+    @property
+    def local(self) -> bool:
+        return _is_local(self.base_url)
+
+
+def dev_overrides() -> dict:
+    """Fields set by opencode.config.json (first) or an OPENCODE_* environment variable:
+    any of api_key, base_url, model. These developer overrides apply on top of the default
+    connection, as they always beat Settings; an explicitly chosen connection ignores them."""
+    oc = _load_opencode_config()
+    out = {}
+    for field, env in (("api_key", "OPENCODE_API_KEY"), ("base_url", "OPENCODE_BASE_URL"), ("model", "OPENCODE_MODEL")):
+        value = (oc.get(field) or "").strip() or os.environ.get(env, "").strip()
+        if value:
+            out[field] = value
+    return out
+
+
+def has_dev_override() -> bool:
+    return bool(dev_overrides())
+
+
+def resolve_legacy() -> Resolved:
+    """Provider settings from the pre-connections sources (override file, env vars,
+    config.json, legacy dotfiles). Raises RuntimeError with a helpful message if no key."""
+    url = _load_base_url()
+    try:
+        key = _load_api_key()
+    except RuntimeError:
+        if not _is_local(url):
+            raise                 # a cloud provider needs a key
+        key = ""                  # Ollama / LM Studio run without one
+    return Resolved(base_url=url, model=_load_model(), api_key=key)
+
+
 # Presets shown in Settings. Every one speaks the OpenAI-compatible API
 # (chat/completions + /models); Azure OpenAI is not included because it needs
 # per-deployment URLs and an api-version.
@@ -182,11 +241,33 @@ PROVIDER_PRESETS = [
     {"id": "openai",     "label": "OpenAI (ChatGPT models)",          "base_url": "https://api.openai.com/v1",                                "key_hint": "sk-…"},
     {"id": "anthropic",  "label": "Anthropic (Claude)",               "base_url": "https://api.anthropic.com/v1",                             "key_hint": "sk-ant-…"},
     {"id": "google",     "label": "Google (Gemini)",                  "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",  "key_hint": "AIza…"},
-    {"id": "openrouter", "label": "OpenRouter (Llama and many more)", "base_url": "https://openrouter.ai/api/v1",                             "key_hint": "sk-or-…"},
+    {"id": "openrouter", "label": "OpenRouter (Llama and many more)", "base_url": "https://openrouter.ai/api/v1",
+     # Where requests are processed. EU and US need OpenRouter's Business or Enterprise plan, and an
+     # account guardrail can restrict which of these addresses it accepts.
+     "regions": [
+         {"id": "global", "label": "Global", "base_url": "https://openrouter.ai/api/v1"},
+         {"id": "eu",     "label": "EU",     "base_url": "https://eu.openrouter.ai/api/v1"},
+         {"id": "us",     "label": "US",     "base_url": "https://us.openrouter.ai/api/v1"},
+     ],
+     "key_hint": "sk-or-…"},
     {"id": "groq",       "label": "Groq (Llama, fast)",               "base_url": "https://api.groq.com/openai/v1",                           "key_hint": "gsk_…"},
     {"id": "ollama",     "label": "Ollama (local Llama)",             "base_url": "http://localhost:11434/v1",                                "key_hint": "not needed", "needs_key": False},
     {"id": "custom",     "label": "Custom gateway",                   "base_url": "",                                                         "key_hint": "your gateway key"},
 ]
+
+def same_key_scope(a: str, b: str) -> bool:
+    """Whether a key saved for URL `a` may be sent to URL `b`: the same URL, or two regions of one
+    provider's own preset (OpenRouter's global, EU and US addresses are one service and one key,
+    so switching region keeps the key). Any other pair of URLs is a different provider."""
+    na, nb = (a or "").strip().rstrip("/"), (b or "").strip().rstrip("/")
+    if na == nb:
+        return True
+    for p in PROVIDER_PRESETS:
+        urls = {r["base_url"].rstrip("/") for r in p.get("regions", [])}
+        if na in urls and nb in urls:
+            return True
+    return False
+
 
 _NON_CHAT_HINTS = ("embed", "whisper", "tts", "dall-e", "moderation", "davinci", "babbage",
                    "transcribe", "realtime", "rerank", "image", "audio")
@@ -194,6 +275,198 @@ _NON_CHAT_HINTS = ("embed", "whisper", "tts", "dall-e", "moderation", "davinci",
 
 def _is_local(url: str) -> bool:
     return any(h in (url or "") for h in ("localhost", "127.0.0.1", "[::1]"))
+
+
+def is_local_provider() -> bool:
+    """True when the configured base URL is a local server (Ollama, LM Studio, ...)."""
+    return _is_local(_load_base_url())
+
+
+def _load_max_tokens(url: str) -> int:
+    """Reply limit: OPENCODE_MAX_TOKENS, then config.json "max_tokens", then a per-provider default."""
+    for raw in (os.environ.get("OPENCODE_MAX_TOKENS"), _load_avio_config().get("max_tokens")):
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            pass
+    return LOCAL_MAX_TOKENS if _is_local(url) else CLOUD_MAX_TOKENS
+
+
+@dataclass
+class StreamFinish:
+    """Yielded last by AIClient.stream(): why the model stopped ("stop", "length", ...)."""
+    reason: Optional[str]
+
+    @property
+    def truncated(self) -> bool:
+        return self.reason == "length"   # hit the token limit; the answer is incomplete
+
+
+class ProviderStreamError(RuntimeError):
+    """An error the provider reported inside an otherwise successful stream. OpenRouter, for one,
+    sends a limit that is hit mid-reply as an event with finish_reason "error" after the HTTP 200,
+    so the SDK raises nothing and the reply would look like a normal (short) finish."""
+
+    def __init__(self, status=None, message: str = "", provider: Optional[str] = None, raw: str = ""):
+        super().__init__(message or "The provider stopped the reply with an error.")
+        self.status = _as_int(status)
+        self.message = message or ""
+        self.provider = provider
+        self.raw = raw or ""
+
+
+def _as_int(value) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clip(text: object, limit: int = 220) -> str:
+    s = re.sub(r"\s+", " ", str(text or "")).strip()
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
+
+
+def _retry_seconds(headers) -> Optional[int]:
+    """How long the provider says to wait, from Retry-After(-Ms) or OpenRouter's X-RateLimit-Reset
+    (epoch milliseconds). None when no usable hint is present."""
+    if headers is None:
+        return None
+    try:
+        get = headers.get
+        if get("retry-after-ms"):
+            secs = float(get("retry-after-ms")) / 1000
+        elif get("retry-after"):
+            secs = float(get("retry-after"))
+        elif get("x-ratelimit-reset"):
+            v = float(get("x-ratelimit-reset"))
+            secs = v / 1000 - time.time() if v > 1e12 else (v - time.time() if v > 1e9 else v)
+        else:
+            return None
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return int(secs) + 1 if 0 < secs <= 86400 else None
+
+
+def _human_wait(secs: Optional[int]) -> str:
+    if not secs:
+        return "a minute"
+    if secs < 90:
+        return f"about {secs} seconds"
+    if secs < 5400:
+        return f"about {round(secs / 60)} minutes"
+    return f"about {round(secs / 3600)} hours"
+
+
+def _error_parts(exc: Exception) -> dict:
+    """Status, provider message and extras from an SDK error or a ProviderStreamError."""
+    if isinstance(exc, ProviderStreamError):
+        return {"status": exc.status, "message": exc.message, "code": None,
+                "provider": exc.provider, "raw": exc.raw, "headers": None}
+    body = getattr(exc, "body", None)
+    err = body.get("error") if isinstance(body, dict) and isinstance(body.get("error"), dict) else \
+        (body if isinstance(body, dict) else {})
+    meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
+    resp = getattr(exc, "response", None)
+    # A stream chunk carrying an "error" object makes the SDK raise a plain APIError, which has no
+    # HTTP status (the 200 was already sent); the status is the error object's own numeric code.
+    return {"status": getattr(exc, "status_code", None) or _as_int(err.get("code")),
+            "message": str(err.get("message") or getattr(exc, "message", "") or ""),
+            "code": err.get("code") or getattr(exc, "code", None),
+            "provider": meta.get("provider_name"),
+            "raw": meta.get("raw") or "",
+            "headers": getattr(resp, "headers", None)}
+
+
+_OR_REGION_NAMES = {"openrouter.ai": "Global", "eu.openrouter.ai": "EU", "us.openrouter.ai": "US"}
+_OR_GUARDRAILS = "openrouter.ai → Workspaces → Default → Guardrails"
+
+
+def _openrouter_403_message(p: dict, r: "Resolved", model: Optional[str]) -> str:
+    """OpenRouter answers 403 when an account guardrail refuses a request: a data region that does not
+    include the address Avio used, or a model, provider or spending rule. Say which, and that Avio's
+    settings and the guardrail have to agree."""
+    host = urlparse(r.base_url).hostname or "openrouter.ai"
+    region = _OR_REGION_NAMES.get(host, host)
+    msg = p["message"] or ""
+    parts = [f"OpenRouter refused this request (403) for {model or r.model}."]
+    if re.search(r"requires a business or enterprise plan|business or enterprise", msg, re.IGNORECASE):
+        # Not a guardrail: the account's plan does not include regional routing, so the EU and US
+        # addresses refuse every request, whatever the model.
+        parts.append(f"Your OpenRouter plan doesn't include {region} routing. The EU and US addresses need the "
+                     "Business or Enterprise plan (openrouter.ai/settings/manage-plan). This is about your account, "
+                     "not the model you chose.")
+        parts.append("Until you upgrade, set this connection's region to Global in ⚙ Settings → AI Model. A guardrail "
+                     "that limits Data regions to EU or US needs the same plan, so allow Global there too (or leave it "
+                     "unrestricted), or Global requests are refused as well. Global still follows your guardrail's allowed "
+                     "models and providers; what it can't promise is that prompts are processed in one region.")
+        parts.append(f'OpenRouter said: "{_clip(msg)}"')
+        return "\n\n".join(parts)
+    m = re.search(r"hostnames?:\s*([\w.\-]+(?:\s*,\s*[\w.\-]+)*)", msg, re.IGNORECASE)
+    if "data region" in msg.lower() or m:
+        allowed = [h.strip().rstrip(".").lower() for h in m.group(1).split(",")] if m else []
+        names = [_OR_REGION_NAMES.get(h, h) for h in allowed]
+        parts.append(f"Your OpenRouter guardrail only accepts requests through {' or '.join(names) or 'other regions'}"
+                     f", but this connection sends them through the {region} address ({host}).")
+        parts.append("Fix it either way: in ⚙ Settings → AI Model, set this connection's OpenRouter region to "
+                     f"{' or '.join(names) or 'an allowed one'}; or add {region} under Data regions in the guardrail "
+                     f"({_OR_GUARDRAILS}).")
+    else:
+        parts.append("This is almost always an account guardrail refusing the request: the model or provider may not "
+                     "be on its allowlist, or a spending limit or data policy applies.")
+        parts.append(f"Make the guardrail match Avio's settings ({_OR_GUARDRAILS}): allow this model, and include the "
+                     f"{region} region that this connection uses.")
+    if msg:
+        parts.append(f'OpenRouter said: "{_clip(msg)}"')
+    return "\n\n".join(parts)
+
+
+def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Optional[str] = None) -> str:
+    """The text shown in the AI panel for a failed request. Rate limits (429) get a plain
+    explanation of what happened and what to do; every other error keeps its original text,
+    except an error reported mid-stream, which now surfaces instead of passing as a finish."""
+    p = _error_parts(exc)
+    if p["status"] == 403 and r and _is_openrouter(r.base_url):
+        return _openrouter_403_message(p, r, model)
+    if p["status"] != 429:
+        if isinstance(exc, ProviderStreamError):
+            code = f" (code {p['status']})" if p["status"] else ""
+            return f"The provider stopped the reply with an error{code}: {_clip(p['message'] or p['raw'], 300)}".rstrip(": ")
+        return str(exc)
+
+    host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
+    model = model or (r.model if r else "") or ""
+    openrouter = bool(r) and _is_openrouter(r.base_url)
+    openai_host = host.endswith("openai.com")
+    wait = _human_wait(_retry_seconds(p["headers"]))
+    low = f"{p['message']} {p['raw']} {p['code'] or ''}".lower()
+    skills_note = ("Avio adds Salesforce guidance to each AI message, which counts toward token limits; "
+                   "⚙ Settings → Skills can switch it off for a test.")
+
+    parts = [f"Rate limited (429) by {host}" + (f" for {model}" if model else "") + "."]
+    if p["code"] == "insufficient_quota" or (openai_host and ("quota" in low or "billing" in low)):
+        parts += ["This 429 is about billing, not speed: the account has no usable credit or quota.",
+                  "Add credit on the provider's billing page. A ChatGPT or Claude subscription does not cover API use."]
+    elif openrouter and model.endswith(":free"):
+        parts += ["Free models have strict limits (20 requests a minute; 50 a day, or 1,000 a day once you have "
+                  "bought $10 or more of credit), and the free provider behind them is often at capacity.",
+                  f"Wait {wait}, or switch to the paid model: in ⚙ Settings choose {model[:-5]} (without ':free').",
+                  skills_note]
+    elif openrouter:
+        parts += ["Every provider serving this model is busy right now (OpenRouter already tried the others).",
+                  f"Wait {wait} and send again."]
+    else:
+        parts += ["Requests or tokens are arriving faster than your plan allows.",
+                  f"Wait {wait} and send again. If it keeps happening, check the provider's rate limits.",
+                  skills_note]
+
+    detail = p["raw"] or p["message"]
+    if detail:
+        who = f" ({p['provider']})" if p["provider"] else ""
+        parts.append(f'The provider said{who}: "{_clip(detail)}"')
+    return "\n\n".join(parts)
 
 
 def _client_kwargs(api_key: str, url: str) -> dict:
@@ -224,14 +497,39 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
     config is used. Raises on failure so the caller can fall back.
     """
     url = (base_url or "").strip() or _load_base_url()
-    # Don't mix a typed-in URL with a different vendor's saved key by accident: a blank
-    # key falls back to the saved one, which is the normal "just refresh" case.
-    kwargs = _client_kwargs((api_key or "").strip(), url)
-    kwargs.update(timeout=10.0, max_retries=0)
-    page = openai.OpenAI(**kwargs).models.list()
-    ids = []
-    for m in page.data:
-        mid = m.id.removeprefix("models/")   # Gemini prefixes ids with "models/"
+    key = (api_key or "").strip()
+    scope = ""
+    if not key and url.rstrip("/") == OPENCODE_GATEWAY_URL.rstrip("/"):
+        # OpenCode's model catalog is public: it answers a request with no Authorization header
+        # (and rejects a made-up key), so list it without one. The full list then shows as soon
+        # as the provider is chosen, before any key is entered.
+        raw_ids = _fetch_public_model_ids(url)
+    else:
+        # Don't mix a typed-in URL with a different vendor's saved key by accident: a blank
+        # key falls back to the saved one, which is the normal "just refresh" case.
+        kwargs = _client_kwargs(key, url)
+        kwargs.update(timeout=10.0, max_retries=0)
+        raw_ids = None
+        if _is_openrouter(url):
+            # An OpenRouter key belongs to a workspace, and the workspace's guardrails (plus the
+            # account's privacy settings and the region of this address) decide what it may use.
+            # /models/user lists exactly that, so the dropdown never offers a model that would be
+            # refused. If it can't be read, fall back to the ordinary list below.
+            _check_openrouter_key(url, kwargs["api_key"])      # raises a plain message for a bad key / refused region
+            try:
+                raw_ids = _fetch_openrouter_workspace_models(url, kwargs["api_key"])
+                scope = "workspace"
+            except Exception:
+                raw_ids = None
+            if raw_ids is not None and not raw_ids:
+                raise RuntimeError("Your OpenRouter workspace allows no models. Check its guardrails "
+                                   "(allowed models and providers) and your account privacy settings.")
+        if raw_ids is None:
+            raw_ids = [m.id for m in openai.OpenAI(**kwargs).models.list().data]
+    ids = ModelIds()
+    ids.scope = scope
+    for rid in raw_ids:
+        mid = rid.removeprefix("models/")   # Gemini prefixes ids with "models/"
         if not any(h in mid.lower() for h in _NON_CHAT_HINTS):
             ids.append(mid)
     if "anthropic.com" not in url:
@@ -239,17 +537,131 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
     return ids
 
 
+class ModelIds(list):
+    """Model ids from fetch_models, plus where the list came from: scope "workspace" when OpenRouter
+    filtered it by the key's workspace guardrails, account privacy settings and region."""
+    scope: str = ""
+
+
+def _is_openrouter(url: str) -> bool:
+    """openrouter.ai or one of its subdomains (the eu. and us. regional addresses); not lookalikes."""
+    host = (urlparse(url or "").hostname or "").lower()
+    return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+
+def _check_openrouter_key(url: str, api_key: str) -> None:
+    """Confirm OpenRouter accepts this key on this address, before its model list is called "the
+    workspace's". /models/user answers an unknown or mistyped key with the ordinary unfiltered list
+    instead of an error, so without this check a wrong key would show "N models your workspace
+    allows". GET /key rejects a bad key (401), and a guardrail that does not allow this region
+    address refuses it (403), which is better learned here than on the first chat message.
+    Raises RuntimeError with a plain message for those two; other failures (network, 5xx) are
+    ignored and the caller falls back to the ordinary list."""
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(url.rstrip("/") + "/key",
+                                 headers={"Authorization": f"Bearer {api_key}", "User-Agent": "Avio"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 403):
+            return
+        try:
+            msg = str(json.loads(e.read().decode("utf-8")).get("error", {}).get("message", ""))
+        except Exception:
+            msg = ""
+        if e.code == 401:
+            raise RuntimeError("OpenRouter rejected this API key (401). Check that it is correct and has not been revoked.")
+        raise RuntimeError(_openrouter_403_message({"message": msg}, Resolved(url, "", ""), None))
+    except Exception:
+        return
+
+
+def _fetch_openrouter_workspace_models(url: str, api_key: str) -> list[str]:
+    """GET <url>/models/user with the key: the models this key's workspace may actually use."""
+    import urllib.request
+    req = urllib.request.Request(url.rstrip("/") + "/models/user",
+                                 headers={"Authorization": f"Bearer {api_key}", "User-Agent": "Avio"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+
+
+def _fetch_public_model_ids(url: str) -> list[str]:
+    """GET <url>/models with no credentials and return the model ids (OpenAI list format)."""
+    import urllib.request
+    req = urllib.request.Request(url.rstrip("/") + "/models", headers={"User-Agent": "Avio"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return [m["id"] for m in data.get("data", [])
+            if isinstance(m, dict) and m.get("id") and not _is_free_model(m)]
+
+
+def _is_free_model(entry: dict) -> bool:
+    """True for a catalog entry priced at $0 for both input and output text tokens. OpenCode's
+    docs say its free models require the OpenCode app ("use paid models or Go from other
+    clients"), so listing them in Avio would mostly offer models that fail. A missing or odd
+    price is treated as paid, so an unexpected catalog shape never hides models."""
+    try:
+        text = entry["cost"]["text"]
+        return float(text["input"]["price"]) == 0 and float(text["output"]["price"]) == 0
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 class AIClient:
     def __init__(self):
-        self._client: Optional[openai.OpenAI] = None  # lazy — recreated when config changes
+        # One SDK client per (URL, key): different panels can use different connections at once.
+        self._clients: dict = {}
 
-    def _get_client(self, force_refresh: bool = False) -> openai.OpenAI:
-        if self._client is None or force_refresh:
-            self._client = openai.OpenAI(**_client_kwargs("", _load_base_url()))
-        return self._client
+    def invalidate(self) -> None:
+        """Drop cached clients (call after connections or keys change)."""
+        self._clients.clear()
 
-    def _model(self) -> str:
-        return _load_model()
+    def _client_for(self, r: Resolved) -> openai.OpenAI:
+        key = (r.base_url, hashlib.sha256(r.api_key.encode("utf-8")).hexdigest()[:16])
+        client = self._clients.get(key)
+        if client is None:
+            client = openai.OpenAI(**_client_kwargs(r.api_key, r.base_url))
+            self._clients[key] = client
+        return client
+
+    @staticmethod
+    def _prepare(messages: list[dict], system: Optional[str]) -> list[dict]:
+        """System prompt + messages, keeping only role/content. The UI stores extra fields
+        on messages (e.g. `system: true`), which strict providers reject."""
+        full: list[dict] = []
+        if system:
+            full.append({"role": "system", "content": system})
+        for m in messages:
+            full.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+        return full
+
+    def _create(self, r: Resolved, model: str, messages: list[dict], max_tokens: int, stream: bool):
+        """chat.completions.create with two compatibility retries on a 400 about the limit:
+        providers differ on the parameter name (OpenAI's newer models want
+        max_completion_tokens and reject max_tokens) and on the largest allowed value."""
+        client = self._client_for(r)
+        param = "max_completion_tokens" if "api.openai.com" in r.base_url else "max_tokens"
+        switched = False
+        for _ in range(5):
+            try:
+                return client.chat.completions.create(
+                    model=model, messages=messages, stream=stream, **{param: max_tokens})
+            except openai.BadRequestError as e:
+                msg = str(e).lower()
+                if "max_tokens" not in msg and "max_completion_tokens" not in msg:
+                    raise
+                other = "max_tokens" if param == "max_completion_tokens" else "max_completion_tokens"
+                if not switched and other in msg and ("unsupported" in msg or "not supported" in msg):
+                    param, switched = other, True
+                    continue
+                smaller = next((n for n in _MAX_TOKEN_LADDER if n < max_tokens), None)
+                if smaller is None:
+                    raise
+                max_tokens = smaller
+        raise RuntimeError("could not find a token limit the provider accepts")
 
     # ------------------------------------------------------------------
     # One-shot (returns full text)
@@ -258,41 +670,57 @@ class AIClient:
         self,
         messages: list[dict],
         system: Optional[str] = None,
-        max_tokens: int = MAX_TOKENS,
+        max_tokens: Optional[int] = None,
         model: Optional[str] = None,
+        resolved: Optional[Resolved] = None,
     ) -> str:
-        full_messages = []
-        if system:
-            full_messages.append({"role": "system", "content": system})
-        full_messages.extend(messages)
-        resp = self._get_client().chat.completions.create(
-            model=model or self._model(),
-            max_tokens=max_tokens,
-            messages=full_messages,
+        r = resolved or resolve_legacy()
+        resp = self._create(
+            r,
+            model or r.model,
+            self._prepare(messages, system),
+            max_tokens or _load_max_tokens(r.base_url),
+            stream=False,
         )
         return resp.choices[0].message.content or ""
 
     # ------------------------------------------------------------------
-    # Streaming (yields text deltas)
+    # Streaming (yields text deltas, then one StreamFinish)
     # ------------------------------------------------------------------
     def stream(
         self,
         messages: list[dict],
         system: Optional[str] = None,
-        max_tokens: int = MAX_TOKENS,
+        max_tokens: Optional[int] = None,
         model: Optional[str] = None,
-    ) -> Generator[str, None, None]:
-        full_messages = []
-        if system:
-            full_messages.append({"role": "system", "content": system})
-        full_messages.extend(messages)
-        with self._get_client().chat.completions.create(
-            model=model or self._model(),
-            max_tokens=max_tokens,
-            messages=full_messages,
+        resolved: Optional[Resolved] = None,
+    ) -> Generator[object, None, None]:
+        r = resolved or resolve_legacy()
+        finish: Optional[str] = None
+        with self._create(
+            r,
+            model or r.model,
+            self._prepare(messages, system),
+            max_tokens or _load_max_tokens(r.base_url),
             stream=True,
         ) as stream:
             for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
+                # An error reported inside the stream (HTTP 200 already sent): raise it, or the
+                # reply would end as if it had finished normally.
+                err = (getattr(chunk, "model_extra", None) or {}).get("error")
+                if err:
+                    meta = err.get("metadata") if isinstance(err, dict) and isinstance(err.get("metadata"), dict) else {}
+                    raise ProviderStreamError(
+                        err.get("code") if isinstance(err, dict) else None,
+                        str(err.get("message") or "") if isinstance(err, dict) else str(err),
+                        meta.get("provider_name"), str(meta.get("raw") or ""))
+                if not chunk.choices:        # e.g. Azure's leading chunk, or a usage-only chunk
+                    continue
+                choice = chunk.choices[0]
+                if choice.finish_reason == "error":
+                    raise ProviderStreamError()
+                if choice.delta.content:
+                    yield choice.delta.content
+                if choice.finish_reason:
+                    finish = choice.finish_reason
+        yield StreamFinish(finish)

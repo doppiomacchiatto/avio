@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { api, isTauri } from "../api/client";
+import { api, isTauri, authHeaders } from "../api/client";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
@@ -156,7 +156,7 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
       const port = window.__SF_BACKEND_PORT__ || 7891;
       const res = await fetch(`http://localhost:${port}/api/export/principal`, {
         method:  "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body:    JSON.stringify({
           alias:          org.alias,
           principal_type: selected.type,

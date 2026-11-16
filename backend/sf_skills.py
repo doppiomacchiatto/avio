@@ -39,6 +39,11 @@ from platform_env import avio_data_dir as _avio_data_dir
 CONFIG_PATH  = _avio_data_dir() / "config.json"
 USER_SKILLS  = _avio_data_dir() / "skills"   # downloaded/imported skills live here
 
+# Local models (Ollama, LM Studio) usually run with a ~4K-token context. The full Apex skill
+# alone is ~6K tokens, and Ollama silently drops the middle of an over-long prompt, so local
+# providers get a condensed summary instead (~1.5K tokens). Configurable: skills_local_budget.
+LOCAL_SKILL_BUDGET = 6000
+
 # Skills live under skills/<slug>/ in the forcedotcom/sf-skills repo
 GH_RAW_BASE  = "https://raw.githubusercontent.com/forcedotcom/sf-skills/main/skills"
 
@@ -74,11 +79,13 @@ def _load_skills_config() -> dict:
                 "custom_skills": raw.get("custom_skills",  []),
                 # "relevant" (default) or "all": which added skills get injected
                 "inject":        raw.get("skills_inject",  "relevant"),
+                # characters of skill text sent to local models; 0 = none, -1 = no limit
+                "local_budget":  raw.get("skills_local_budget", LOCAL_SKILL_BUDGET),
             }
     except Exception as e:
         log.debug("sf_skills: could not read config — %s", e)
     return {"enabled": True, "source": "bundled", "path": None, "url": None,
-            "custom_skills": [], "inject": "relevant"}
+            "custom_skills": [], "inject": "relevant", "local_budget": LOCAL_SKILL_BUDGET}
 
 
 def _resolve_skills_root(cfg: dict) -> Optional[Path]:
@@ -221,7 +228,9 @@ def _load_file_url(base_url: str, rel_path: str, use_cache: bool = True) -> Opti
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             content = resp.read().decode("utf-8")
-            content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()
+            if _is_markdown(rel_path):      # HTML comments are markdown noise; leave code files as they are
+                content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+            content = content.strip()
     except urllib.error.HTTPError as e:
         # Optional reference files are probed by name, so a 404 is expected.
         (log.debug if e.code == 404 else log.warning)("sf_skills: HTTP %s for %s", e.code, url)
@@ -244,34 +253,74 @@ _FALLBACK_REFS = [
     "references/examples.md",
 ]
 _MAX_DISCOVERED_REFS = 40
-_MD_LINK_RE = re.compile(r"\]\(\s*<?([^)\s>#]+\.md)(?:#[^)\s]*)?>?\s*\)", re.IGNORECASE)
+
+# Skills link more than markdown: Apex templates, query samples, metadata files. Those are fetched
+# and injected too, but only when SKILL.md links to them (the author's own reference list), so a
+# skill with a big assets/ folder does not send all of it. Scripts (.py, .sh) are never included.
+_ASSET_EXTS = ("cls", "trigger", "apex", "soql", "xml", "json", "yaml", "yml", "txt", "js", "html", "css")
+_REF_EXT = "(?:md|" + "|".join(_ASSET_EXTS) + ")"
+_MAX_ASSET_CHARS = 30_000          # per non-markdown file; larger ones are skipped
+_MD_LINK_RE = re.compile(r"\]\(\s*<?([^)\s>#]+\." + _REF_EXT + r")(?:#[^)\s]*)?>?\s*\)", re.IGNORECASE)
 _MD_BARE_RE = re.compile(
-    r"(?<![\w/.\\-])((?:references|resources|docs|templates|examples|assets)/[\w./-]+\.md)",
+    r"(?<![\w/.\\-])((?:references|resources|docs|templates|examples|assets)/[\w./-]+\." + _REF_EXT + r")(?![\w-])",
     re.IGNORECASE,
 )
 
 
-def _candidate_ref_paths(skill_md: Optional[str]) -> list[str]:
-    """
-    Relative .md paths to download next to SKILL.md: every file SKILL.md links to
-    (e.g. `[...](references/foo.md)`), then the common fallback names.
-    Only plain relative paths are accepted (no URLs, absolute paths, or `..`).
-    """
+def _is_markdown(rel: str) -> bool:
+    return rel.lower().endswith(".md")
+
+
+def _linked_paths(skill_md: Optional[str]) -> list[str]:
+    """Relative paths SKILL.md links to (markdown or an allowed asset type), in order of appearance.
+    Only plain relative paths are accepted (no URLs, absolute paths, or `..`)."""
     found: list[str] = []
-    if skill_md:
-        for raw in _MD_LINK_RE.findall(skill_md) + _MD_BARE_RE.findall(skill_md):
-            p = raw.strip()
-            if "\\" in p or p.startswith(("/", "#")) or re.match(r"^[a-z][a-z0-9+.-]*:", p, re.IGNORECASE):
-                continue
-            parts = [s for s in p.split("/") if s not in ("", ".")]
-            if not parts or ".." in parts:
-                continue
-            p = "/".join(parts)
-            if p.lower() != "skill.md" and p not in found:
-                found.append(p)
-            if len(found) >= _MAX_DISCOVERED_REFS:
-                break
+    if not skill_md:
+        return found
+    for raw in _MD_LINK_RE.findall(skill_md) + _MD_BARE_RE.findall(skill_md):
+        p = raw.strip()
+        if "\\" in p or p.startswith(("/", "#")) or re.match(r"^[a-z][a-z0-9+.-]*:", p, re.IGNORECASE):
+            continue
+        parts = [s for s in p.split("/") if s not in ("", ".")]
+        if not parts or ".." in parts:
+            continue
+        p = "/".join(parts)
+        if p.lower() != "skill.md" and p not in found:
+            found.append(p)
+        if len(found) >= _MAX_DISCOVERED_REFS:
+            break
+    return found
+
+
+def _candidate_ref_paths(skill_md: Optional[str]) -> list[str]:
+    """Relative paths to download next to SKILL.md: every file SKILL.md links to
+    (e.g. `[...](references/foo.md)` or `[...](assets/template.cls)`), then the common
+    fallback markdown names."""
+    found = _linked_paths(skill_md)
     return found + [p for p in _FALLBACK_REFS if p not in found]
+
+
+_FENCE_LANG = {"cls": "apex", "trigger": "apex", "apex": "apex", "soql": "sql", "yml": "yaml"}
+
+
+def _asset_block(rel: str, content: str) -> str:
+    """A non-markdown skill file as a labelled code block, so the model knows what it is."""
+    ext = rel.rsplit(".", 1)[-1].lower()
+    return f"### Skill file: `{rel}`\n\n````{_FENCE_LANG.get(ext, ext)}\n{content.strip()}\n````"
+
+
+def _read_linked_asset(skill_dir: Path, rel: str) -> Optional[str]:
+    """Text of a linked non-markdown file inside skill_dir, or None (missing, too big, outside the
+    folder, or unreadable)."""
+    try:
+        root = skill_dir.resolve()
+        f = (skill_dir / rel).resolve()
+        if root not in f.parents or not f.is_file() or f.stat().st_size > _MAX_ASSET_CHARS * 4:
+            return None
+        text = f.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return text if text.strip() and len(text) <= _MAX_ASSET_CHARS else None
 
 
 # ---------------------------------------------------------------------------
@@ -305,8 +354,8 @@ def _load_custom_skill_context(entry: dict) -> Optional[str]:
         parts = [skill_md] if skill_md else []
         for rel in _candidate_ref_paths(skill_md):
             content = _load_file_url(base_url, rel)
-            if content:
-                parts.append(content)
+            if content and (_is_markdown(rel) or len(content) <= _MAX_ASSET_CHARS):
+                parts.append(content if _is_markdown(rel) else _asset_block(rel, content))
         if not parts:
             log.warning("sf_skills: custom skill URL returned no content: %s", base_url)
             return None
@@ -343,6 +392,10 @@ def _load_custom_skill_context(entry: dict) -> Optional[str]:
                 parts.append(content)
         except Exception as e:
             log.debug("sf_skills: custom skill read error %s — %s", md, e)
+    for rel in _linked_paths(parts[0] if parts and skill_md.exists() else ""):
+        asset = None if _is_markdown(rel) else _read_linked_asset(root, rel)
+        if asset:
+            parts.append(_asset_block(rel, asset))
 
     if not parts:
         return None
@@ -405,12 +458,7 @@ def _fetch_skill_impl(name: str, source: str) -> dict:
             src_dir = SKILLS_DIR / skill_slug
             if not src_dir.is_dir():
                 return {"ok": False, "path": str(dest), "files": 0, "error": f"'{skill_slug}' is not bundled with this version of Avio yet"}
-            for md in src_dir.rglob("*.md"):
-                rel = md.relative_to(src_dir)
-                out = dest / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(md, out)
-                files_written += 1
+            files_written = _copy_skill_dir(src_dir, dest)
 
         # ── GitHub shorthand ──────────────────────────────────────────────────
         elif source.startswith("github:"):
@@ -428,12 +476,7 @@ def _fetch_skill_impl(name: str, source: str) -> dict:
             src_dir = Path(raw).expanduser()
             if not src_dir.is_dir():
                 return {"ok": False, "path": str(dest), "files": 0, "error": f"Directory not found: {src_dir}"}
-            for md in src_dir.rglob("*.md"):
-                rel = md.relative_to(src_dir)
-                out = dest / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(md, out)
-                files_written += 1
+            files_written = _copy_skill_dir(src_dir, dest)
 
         # Write a meta file so we know the origin
         (dest / ".avio_skill_meta.json").write_text(
@@ -471,9 +514,28 @@ def _fetch_skill_from_url(base_url: str, dest: Path) -> int:
         _save("SKILL.md", skill_md)
     for rel in _candidate_ref_paths(skill_md):
         content = _load_file_url(base_url, rel, use_cache=False)
-        if content:
+        if content and (_is_markdown(rel) or len(content) <= _MAX_ASSET_CHARS):
             _save(rel, content)
     return written
+
+
+def _copy_skill_dir(src_dir: Path, dest: Path) -> int:
+    """Copy a skill folder: every markdown file, plus the non-markdown files SKILL.md links to
+    (the same set _fetch_skill_from_url downloads). Returns the number of files copied."""
+    import shutil
+    copied = 0
+    skill_md = src_dir / "SKILL.md"
+    linked = _linked_paths(skill_md.read_text(encoding="utf-8")) if skill_md.is_file() else []
+    wanted = list(src_dir.rglob("*.md")) + [
+        src_dir / rel for rel in linked
+        if not _is_markdown(rel) and _read_linked_asset(src_dir, rel) is not None
+    ]
+    for f in wanted:
+        out = dest / f.relative_to(src_dir)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, out)
+        copied += 1
+    return copied
 
 
 # Added skills are only injected when they look relevant to the conversation, and the
@@ -504,19 +566,40 @@ def _skill_score(stems: list[str], text: str) -> int:
     return sum(1 for s in stems if re.search(r"\b" + re.escape(s), text))
 
 
-def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
-    """
-    Build the context block for skills in the user skills dir (added via Add Skill).
+# The topic words of the built-in skills. Every Apex or SOQL prompt contains them (and the
+# Apex/SOQL panels add them), so they cannot qualify a skill that also has a more specific
+# topic word: 'apex-debug-logs' must not load for a test-class prompt just because both say apex.
+_DOMAIN_STEMS = {"apex", "soql", "sosl"}
 
-    mode "relevant" (default): include a skill only if a topic word from its name
+
+def _qualifies(stems: list[str], text: str) -> bool:
+    """A skill is relevant when one of its specific topic words appears in the text; a skill
+    named only with domain words (e.g. 'apex-guide') qualifies on those."""
+    specific = [s for s in stems if s not in _DOMAIN_STEMS]
+    return _skill_score(specific or stems, text) >= 1
+
+
+def _build_user_skills_context(text: str = "", mode: str = "relevant",
+                               max_chars: int = MAX_USER_SKILL_CHARS) -> str:
+    """The context block only; see _user_skills for the selection rules."""
+    return _user_skills(text, mode, max_chars)[0]
+
+
+def _user_skills(text: str = "", mode: str = "relevant",
+                 max_chars: int = MAX_USER_SKILL_CHARS) -> tuple[str, list[str]]:
+    """
+    Build the context block for skills in the user skills dir (added via Add Skill) and the
+    display names of the skills that made it in.
+
+    mode "relevant" (default): include a skill only if a specific topic word from its name
     appears in `text` (the recent conversation, plus 'apex'/'soql' when those built-in
-    skills were detected). A skill whose name has no topic words is always included.
-    Best matches first, stopping at MAX_USER_SKILL_CHARS.
+    skills were detected); see _qualifies. A skill whose name has no topic words is always
+    included. Best matches first, stopping at `max_chars` (default MAX_USER_SKILL_CHARS).
     mode "all": include every added skill (still capped).
-    Returns '' if nothing qualifies.
+    Returns ('', []) if nothing qualifies.
     """
     if not USER_SKILLS.is_dir():
-        return ""
+        return "", []
     text = (text or "").lower()
     candidates: list[tuple[int, str, str]] = []   # (score, display, section)
     for skill_dir in sorted(USER_SKILLS.iterdir()):
@@ -534,16 +617,18 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
 
         # Decide relevance before reading any files
         stems = _skill_stems(skill_dir.name, display)
-        score = _skill_score(stems, text)
-        if mode != "all" and stems and score == 0:
+        score = _skill_score(stems, text)           # used to rank; _qualifies decides inclusion
+        if mode != "all" and stems and not _qualifies(stems, text):
             continue
 
         parts = []
+        skill_text = ""
         skill_md = skill_dir / "SKILL.md"
         if skill_md.exists():
             content = _load_file_local(skill_dir, "SKILL.md")
             if content:
                 parts.append(content)
+                skill_text = content
         for md in sorted(skill_dir.rglob("*.md")):
             if md == skill_md or md.name.startswith("."):
                 continue
@@ -554,27 +639,37 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
                     parts.append(content)
             except Exception:
                 pass
+        # Templates and samples the skill links to (assets/*.cls, ...): without them the model is
+        # told to "start from the template" and never sees it.
+        for rel in _linked_paths(skill_text):
+            if _is_markdown(rel):
+                continue
+            asset = _read_linked_asset(skill_dir, rel)
+            if asset:
+                parts.append(_asset_block(rel, asset))
         if parts:
             candidates.append((score, display, f"## {display}\n\n" + "\n\n---\n\n".join(parts)))
 
     if not candidates:
-        return ""
+        return "", []
 
     # Best matches first; stop adding once the budget is used up
     candidates.sort(key=lambda c: (-c[0], c[1].lower()))
     sections: list[str] = []
+    names: list[str] = []
     used = 0
     skipped: list[str] = []
     for _score, display, section in candidates:
-        if used + len(section) > MAX_USER_SKILL_CHARS:
+        if used + len(section) > max_chars:
             if sections:
                 skipped.append(display)
                 continue
-            section = section[:MAX_USER_SKILL_CHARS] + "\n\n[... skill truncated ...]"
+            section = section[:max_chars] + "\n\n[... skill truncated ...]"
         sections.append(section)
+        names.append(display)
         used += len(section)
     if skipped:
-        log.warning("sf_skills: skipped added skills over the %d-char budget: %s", MAX_USER_SKILL_CHARS, skipped)
+        log.warning("sf_skills: skipped added skills over the %d-char budget: %s", max_chars, skipped)
 
     return (
         "\n\n"
@@ -582,17 +677,40 @@ def _build_user_skills_context(text: str = "", mode: str = "relevant") -> str:
         "The following additional guidance has been added to Avio.\n\n"
         + "\n\n===\n\n".join(sections)
         + "\n\n=== END ADDITIONAL SKILL REFERENCE ==="
-    )
+    ), names
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
+def _condense(text: str, limit: int) -> str:
+    """
+    Shrink one skill file to about `limit` characters: drop the YAML header, start at the
+    rules section if there is one (the most useful part), and cut at a heading or blank
+    line so a rule is not split mid-sentence.
+    """
+    body = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", text, count=1, flags=re.DOTALL).lstrip()
+    m = re.search(r"(?im)^##\s+[^\n]*(?:rules|constraints|guardrails)[^\n]*$", body)
+    if m:
+        body = body[m.start():]
+    if len(body) <= limit:
+        return body
+    cut = body[:limit]
+    idx = max(cut.rfind("\n### "), cut.rfind("\n## "), cut.rfind("\n\n"))
+    if idx > limit * 0.5:
+        cut = cut[:idx]
+    return cut.rstrip() + "\n\n[... condensed for a small context window ...]"
+
+
+def build_skill_context(skills: list[str], cfg: Optional[dict] = None,
+                        budget: Optional[int] = None) -> str:
     """
     Assemble skill markdown for the given skill names into a single block
     ready to append to the system prompt. Returns "" if nothing available.
+
+    `budget` (characters) switches to condensed mode for small-context models: only each
+    skill's SKILL.md is used, shrunk with _condense, sharing the budget between skills.
     """
     if not skills:
         return ""
@@ -604,15 +722,20 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
     use_http = (root is None)
     base_url = _effective_base_url(cfg) if use_http else ""
 
+    per_skill = (budget // len(skills)) if budget is not None else 0
     sections: list[str] = []
     for skill in skills:
         files = SKILL_FILES.get(skill, [])
+        if budget is not None:
+            files = files[:1]   # SKILL.md only; reference files are too big for a small context
         parts = []
         for f in files:
             content = (
                 _load_file_url(base_url, f) if use_http
                 else _load_file_local(root, f)
             )
+            if content and budget is not None:
+                content = _condense(content, per_skill)
             if content:
                 parts.append(content)
         if parts:
@@ -632,33 +755,65 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None) -> str:
 
 
 def augment_system(system: Optional[str], messages: list[dict],
-                   force_skills: Optional[list[str]] = None) -> str:
+                   force_skills: Optional[list[str]] = None,
+                   local: bool = False) -> str:
+    """The augmented system prompt only; see augment_with_skills."""
+    return augment_with_skills(system, messages, force_skills, local)[0]
+
+
+def augment_with_skills(system: Optional[str], messages: list[dict],
+                        force_skills: Optional[list[str]] = None,
+                        local: bool = False) -> tuple[str, list[str]]:
     """
     Detect relevant skills from message history and append their context
-    to the system prompt. Returns the (possibly unchanged) system string.
+    to the system prompt. Returns (system string, names of the skills actually injected),
+    so the UI can show what was used instead of asking the model.
     `force_skills` are included regardless of keyword detection.
-    Respects skills_enabled and skills_source config from ~/.avio_config.json.
+    `local=True` (Ollama and other local servers) switches to a condensed summary that
+    fits a small context window; see LOCAL_SKILL_BUDGET / "skills_local_budget".
+    Respects skills_enabled and skills_source config from the Avio config.json.
     """
     cfg = _load_skills_config()
 
     if not cfg.get("enabled", True):
-        return system or ""
+        return system or "", []
+
+    budget: Optional[int] = None
+    if local:
+        try:
+            b = int(cfg.get("local_budget", LOCAL_SKILL_BUDGET))
+        except (TypeError, ValueError):
+            b = LOCAL_SKILL_BUDGET
+        budget = None if b < 0 else b          # -1 = send everything, like a cloud model
+        if budget == 0:
+            return system or "", []            # skills switched off for local models
 
     skills = detect_skills(messages, force_skills)
-    extra = build_skill_context(skills, cfg) if skills else ""
+    extra = build_skill_context(skills, cfg, budget=budget) if skills else ""
+    names: list[str] = []
     if extra:
-        log.info("sf_skills: injecting skills %s (source=%s)", skills, cfg.get("source"))
+        log.info("sf_skills: injecting skills %s (source=%s%s)", skills, cfg.get("source"),
+                 f", condensed to ~{budget} chars" if budget is not None else "")
+        suffix = " (condensed)" if budget is not None else ""
+        names = [f"{_SKILL_LABELS.get(s, s)}{suffix}" for s in skills]
 
     # Skills the user added: only the ones relevant to this conversation. The built-in
     # topics count as words in the conversation, so an added 'apex-test' skill is picked
     # up in the Apex Runner even when the prompt never says "apex".
     hints = (" apex" if APEX_SKILL in skills else "") + (" soql" if SOQL_SKILL in skills else "")
-    user_ctx = _build_user_skills_context(_recent_user_text(messages) + hints, cfg.get("inject", "relevant"))
-    if user_ctx:
-        log.info("sf_skills: injecting added skills (%d chars)", len(user_ctx))
-        extra += user_ctx
+    if budget is None:
+        user_cap = MAX_USER_SKILL_CHARS
+    else:
+        user_cap = max(0, budget - len(extra))   # whatever the built-in summary left over
+    if user_cap >= 1500:
+        user_ctx, user_names = _user_skills(
+            _recent_user_text(messages) + hints, cfg.get("inject", "relevant"), max_chars=user_cap)
+        if user_ctx:
+            log.info("sf_skills: injecting added skills %s (%d chars)", user_names, len(user_ctx))
+            extra += user_ctx
+            names += user_names
 
-    return (system or "") + extra if extra else (system or "")
+    return ((system or "") + extra if extra else (system or "")), names
 
 
 # ---------------------------------------------------------------------------

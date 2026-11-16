@@ -17,6 +17,32 @@ async function getInvoke() {
   return _invoke;
 }
 
+// Per-launch API token. The Tauri shell generates it, passes it to the backend, and hands it to
+// the page through the get_api_token command (more reliable than a variable injected into the
+// page, which a reload would lose). It is "" in dev mode, where the backend is open.
+let _token = null;
+
+export async function getApiToken() {
+  if (_token !== null) return _token;
+  let token = "";
+  if (isTauri()) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      token = (await invoke("get_api_token")) || "";
+    } catch { /* older shell without the command: backend is open */ }
+  } else {
+    token = window.__AVIO_TOKEN__ || "";
+  }
+  _token = token;
+  return _token;
+}
+
+// Header to add to every direct fetch() to the backend.
+export async function authHeaders() {
+  const t = await getApiToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 export async function api(path, opts = {}) {
   const method = (opts.method || "GET").toUpperCase();
   const t0 = performance.now();
@@ -30,6 +56,11 @@ export async function api(path, opts = {}) {
     debugLog(`← ${method} ${path} FAILED (${((performance.now() - t0) / 1000).toFixed(1)}s): ${firstLine}`, "error");
     throw e;
   }
+}
+
+// Same as api() without the debug-log entries, for polling loops.
+export function apiQuiet(path, opts = {}) {
+  return apiRaw(path, opts);
 }
 
 /**
@@ -86,10 +117,8 @@ async function apiRaw(path, opts = {}) {
   const url  = `http://localhost:${port}${path}`;
   let res;
   try {
-    res = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-      ...opts,
-    });
+    const headers = { "Content-Type": "application/json", ...(await authHeaders()), ...(opts.headers || {}) };
+    res = await fetch(url, { ...opts, headers });
   } catch (e) {
     throw new Error(
       `Cannot reach backend at ${url}\n` +
@@ -109,7 +138,10 @@ async function apiRaw(path, opts = {}) {
   return res.json();
 }
 
-export async function apiStream(path, body, onDelta, onDone, onError) {
+// onTruncated() fires (before onDone) when the model stopped because it hit its token
+// limit, i.e. the answer is incomplete. onSkills(names) fires first with the skills the
+// backend actually injected into the prompt (an empty array when none).
+export async function apiStream(path, body, onDelta, onDone, onError, onTruncated, onSkills) {
   // Streaming SSE must use fetch directly (Tauri IPC doesn't support streaming)
   const port = window.__SF_BACKEND_PORT__ || 7891;
   const url  = `http://localhost:${port}${path}`;
@@ -117,7 +149,7 @@ export async function apiStream(path, body, onDelta, onDone, onError) {
   try {
     res = await fetch(url, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body:    JSON.stringify(body),
     });
   } catch (e) {
@@ -147,11 +179,18 @@ export async function apiStream(path, body, onDelta, onDone, onError) {
       try {
         const obj = JSON.parse(payload);
         if (obj.error) { onError(obj.error); return; }
+        if (obj.truncated) onTruncated?.();
+        if (Array.isArray(obj.skills)) onSkills?.(obj.skills);
         if (obj.delta) onDelta(obj.delta);
       } catch {}
     }
   }
   onDone();
+}
+
+// True for a local model server (Ollama, LM Studio, ...), which usually has a small context window.
+export function isLocalUrl(url) {
+  return /(^|\/\/)(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(String(url || "").trim());
 }
 
 // window.__TAURI__ only exists when app.withGlobalTauri is true (it is not), so

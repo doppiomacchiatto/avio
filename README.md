@@ -1,4 +1,4 @@
-# Avio v1.0.1 Beta — Salesforce Metadata Explorer
+# Avio v1.0.2 Beta — Salesforce Metadata Explorer
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Avio-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/doppiomacchiato)
 
@@ -18,7 +18,7 @@ Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (
 **Not code-signed yet.** Windows SmartScreen may show "Windows protected your PC": click **More info → Run anyway**. Each release lists the SHA-256 of its installers; to check yours:
 
 ```powershell
-Get-FileHash .\Avio_1.0.1_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Avio_1.0.2_x64-setup.exe -Algorithm SHA256
 ```
 
 Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically on first run.
@@ -41,7 +41,7 @@ Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically o
 
 **Startup.** In a packaged build the Tauri shell picks a free local port, starts the bundled `sf_backend` binary with `SF_BACKEND_PORT` set, and injects `window.__SF_BACKEND_PORT__` into the page. The UI waits for `/api/health` before loading orgs. In dev (`npm run dev`) the backend is started separately on the fixed port 7891. When the window closes, the shell asks the UI to confirm, then stops the backend and its child processes.
 
-**Requests.** The React UI calls the backend over HTTP on localhost (`frontend/src/api/client.js`); the Content Security Policy only allows `localhost` and `127.0.0.1`. AI chat uses Server-Sent Events (`/api/ai/chat`) for streaming. The shell also exposes Tauri commands (`api_get`, `api_post`) that proxy requests through Rust; the desktop client only supports GET and POST this way, so destructive actions have a POST alias.
+**Requests.** The React UI calls the backend over HTTP on localhost (`frontend/src/api/client.js`); the Content Security Policy only allows `localhost` and `127.0.0.1`. The backend listens on loopback only and requires a **per-launch token**: the shell generates a random secret at startup, hands it to the backend (`AVIO_API_TOKEN`) and to the page (`get_api_token`), and every `/api` call must send it as `Authorization: Bearer …` (only `/api/health` and the API docs are open). That stops other web pages and local programs from using your saved AI keys. With no token set, as in `npm run dev`, the backend is open. AI chat uses Server-Sent Events (`/api/ai/chat`) for streaming. The shell also exposes Tauri commands (`api_get`, `api_post`) that proxy requests through Rust; the desktop client only supports GET and POST this way, so destructive actions have a POST alias.
 
 **Native features** are Tauri commands and plugins, not backend routes: `write_file`, `path_exists`, `open_file`, `restart_backend`, `confirm_close`, and the dialog plugin (Save / Choose folder). In Tauri v2, `window.__TAURI__` only exists when `withGlobalTauri` is on (it is off), so the frontend uses `isTauri()` from `client.js` or imports `@tauri-apps/*` directly.
 
@@ -77,7 +77,8 @@ avio/
 │       ├── data/             # Static data (Org Health checks)
 │       └── pages/            # FlsExplorer, ProfilesExplorer, SoqlRunner, ApexRunner,
 │                             # RestExplorer, OrgHealth, ClaudeChat
-└── scripts/venv-run.mjs      # Runs tools from backend/.venv on any OS
+├── docs/                     # User guides (AI connections and API keys)
+├── scripts/venv-run.mjs      # Runs tools from backend/.venv on any OS
 ```
 
 ### Backend routes (overview)
@@ -85,6 +86,7 @@ avio/
 | Area | Routes |
 |---|---|
 | App & health | `/api/health`, `/api/sf-version`, `/api/shutdown`, `/api/settings`, `/api/open_file` |
+| Org login | `/api/org-login` (start / status), `/api/org-login/options`, `/api/org-login/cancel` |
 | Orgs & metadata | `/api/orgs`, `…/objects`, `…/fields`, `…/profiles`, `…/permsets`, `…/fls`, `…/limits`, `…/api-version`, `…/security-settings` |
 | Validation rules | `…/validation-rules` (list, toggle, restore snapshot) |
 | Query & execute | `/api/soql`, `/api/soql/history`, `/api/apex`, `…/rest` (REST proxy) |
@@ -220,28 +222,90 @@ npx tauri build
 
 | OS | Location |
 |---|---|
-| Windows | `%APPDATA%\Avio\` (`config.json`, `api_key`, `skills\`, `query_history.db`) |
+| Windows | `%APPDATA%\Avio\` (`config.json`, `skills\`, `query_history.db`, `vr_snapshots.json`) |
 | macOS | `~/.avio/` |
 | Linux | `$XDG_DATA_HOME/avio/` (default `~/.local/share/avio/`) |
 
-The AI API key is stored in plain text in this folder, so treat it like a credential.
+AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
+
+## Logging in to a Salesforce org
+
+Avio uses the orgs your `sf` CLI is already logged in to. If there are none, the org picker shows a login panel instead of an error: choose **Production** or **Sandbox / test** and click **Log in with browser**. Avio runs
+
+```
+sf org login web --instance-url <login URL> --alias <alias>
+```
+
+and the page continues by itself once you finish in the browser (there is a Cancel button, and a 5-minute limit). The same panel opens from **＋ Log in to another org** under the org list, so you can add an org without a terminal. Avio never sees your password; the CLI keeps the session as usual.
+
+| Choice | Login URL | Alias |
+|---|---|---|
+| Production | `https://login.salesforce.com` | `avio-prod` |
+| Sandbox / test | `https://test.salesforce.com` | `avio-dev` |
+
+**Airgapped or special environments** (a private login host, government or other isolated instances): override either URL in `config.json` (see "User data"). Only `https://` URLs are accepted; anything else is ignored and the default is used.
+
+```json
+{
+  "org_login_urls": {
+    "production": "https://login.example.mil",
+    "test": "https://test.example.mil"
+  }
+}
+```
+
+The panel shows the URL it will use (marked "from your config" when overridden) and, under "Prefer a terminal, or the browser can't open?", the exact command to run yourself, plus a **Check for orgs** button. The alias is fixed per type, so logging in a second time as the same type re-points that alias to the new login. To keep both, log in with the CLI under your own alias.
+
+## AI connections and API keys
+
+Under **⚙ Settings → AI Model**, each **AI connection** is one saved provider setup: a name, a provider (OpenAI, Anthropic, Google, OpenRouter, Groq, the OpenCode gateway, Ollama, or any OpenAI-compatible URL), a model and an API key. The Apex Runner, SOQL Runner and AI Chat each get a dropdown (once you have two or more connections) to choose which one that panel uses, so one session can use OpenAI while another uses Claude. One connection is the default.
+
+**To set one up:** get an API key from your provider's console, open ⚙ Settings → AI Model → *＋ New connection…*, pick the provider, paste the key, choose a model and Save. A chat subscription isn't an API key: ChatGPT Plus and a Claude Pro/Max or Claude Code login can't be used.
+
+**OpenRouter:** choosing it asks where prompts should be processed (Global, EU or US; EU and US need OpenRouter's Business or Enterprise plan). Set your OpenRouter **guardrails** (Workspaces → Default → Guardrails: data regions, allowed models and providers) to match, or OpenRouter refuses requests with a 403, which Avio explains. Details in the guide below.
+
+**How keys are used and stored, in short:**
+
+- Keys live in your **operating system's keystore** (Windows Credential Manager, macOS Keychain, Linux Secret Service), not in `config.json`, which only holds each connection's name, URL and model.
+- The page never receives a key. It sends the backend a connection id; the backend reads the key from the keystore and sends it, as a bearer token, **only to that connection's own URL**. No endpoint ever returns a key, and Settings shows only "key saved" and the last four characters.
+- Changing a connection's provider or URL drops its saved key, so a key is never sent to a provider it wasn't saved for.
+- This protects against copied or backed-up settings files; it does not stop other programs running as you from reading the keystore. The per-launch API token keeps other web pages and programs out of Avio's own API.
+- If no system keystore exists, keys fall back to a private, **unencrypted** file and Settings warns you.
+- The first run of 1.0.2 or later moves an old plain-text `api_key` file into the keystore as a "Default" connection and deletes the file (after confirming the keystore returns the key). Older versions can't read it afterwards.
+
+**Full guide: [docs/ai-connections-and-keys.md](docs/ai-connections-and-keys.md)** covers per-provider setup, rotating or removing keys, exactly what is sent to your provider, where each OS stores keys, developer overrides and troubleshooting.
 
 ## AI skills
 
 AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](https://github.com/forcedotcom/sf-skills) (`backend/sf_skills.py`).
 
-- **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill.
-- **Added skills** (Settings → Skills → Add) are added only when a topic word from the skill's name appears in the conversation (`platform-apex-test-generate` matches "apex" and "test"; the Apex Runner counts as "apex"). Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
-- **Downloads** fetch `SKILL.md` plus every `.md` file it links to. GitHub / URL sources are cached in memory for an hour.
+- **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill and the SOQL Runner always includes the SOQL skill.
+- **Added skills** (Settings → Skills → Add) are added only when a specific topic word from the skill's name appears in the conversation (`apex-test-generate` loads for "test", `apex-debug-logs` for "debug" or "logs"). The generic words `apex`, `soql` and `sosl` do not count when a skill has a more specific word, so a test-class prompt does not pull in the debug-log skill; a skill named only with such a word (`apex-guide`) loads in that panel. Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
+- **Downloads** fetch `SKILL.md` plus every file it links to: markdown references, and also templates and samples such as `assets/test-class-template.cls` (types `.cls .trigger .apex .soql .xml .json .yaml .yml .txt .js .html .css`, up to 30,000 characters each). Only linked files are used, so a skill with a large `assets/` folder does not send all of it, and scripts are never fetched. The model sees a template as a labelled code block. A skill added by an older build may hold only `SKILL.md`: remove it and add it again (Settings → Skills) to pick up the rest. A skill with templates makes each message larger: Apex Test Generate adds about 25 KB (~6,000 tokens). GitHub / URL sources are cached in memory for an hour.
+- **Local models (Ollama, LM Studio)** usually run with a ~4K-token context, and Ollama silently drops the middle of a longer prompt. So for a local Gateway URL Avio sends a condensed skill summary (about 6,000 characters of each skill's rules, ~1.5K tokens) instead of the full text. Set `"skills_local_budget"` in `config.json` to change it (`0` = no skills for local models, `-1` = send everything, for models run with a large context). The first request to a local model can take a minute or two while it loads.
+
+- **See what was used.** Under every AI reply, a **"Skills used"** line lists the skills Avio actually added to that request (for example "Apex Generate, Apex Test Generate", or "none"). It comes from the backend, not from the model, so there is no need to ask the model whether a skill was loaded; it can't know.
+
+### Reply length
+
+Avio asks for up to 16,384 tokens from cloud models (reasoning models spend part of that on hidden thinking) and 4,096 from local ones. If a model still stops at its limit, the chat shows **"The model hit its reply limit"** with a **Continue** button instead of presenting a cut-off answer as complete. Override the limit with `"max_tokens"` in `config.json` or the `OPENCODE_MAX_TOKENS` environment variable. If a provider rejects the limit as too large, or wants `max_completion_tokens` (newer OpenAI models), Avio retries automatically.
+
+### Developer override file
+
+A `opencode.config.json` in the project root (git-ignored), or `OPENCODE_API_KEY` / `OPENCODE_BASE_URL` / `OPENCODE_MODEL` in the environment, overrides the default connection's key, URL and model. A panel that has an explicit connection chosen ignores the override, and an override that points at a different host never borrows a saved key. Copy `opencode.config.example.json` to create one, and delete any field you don't want to force. It only applies when running from source; the packaged app doesn't bundle it.
 
 ## Environment variables
 
 | Variable            | Default | Purpose                        |
 |---------------------|---------|--------------------------------|
 | `SF_BACKEND_PORT`   | 7891 (dev) / free port (packaged) | Port for the FastAPI server |
-| `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` | — | AI provider API key (fallback if none is saved in Settings) |
-| `OPENCODE_BASE_URL` | — | AI gateway URL (OpenAI-compatible) |
-| `OPENCODE_MODEL`    | — | Default AI model |
+| `OPENCODE_API_KEY`  | — | Developer override of the default connection's API key (not saved anywhere) |
+| `OPENCODE_BASE_URL` | — | Developer override of the AI gateway URL (OpenAI-compatible) |
+| `OPENCODE_MODEL`    | — | Developer override of the AI model |
+| `ANTHROPIC_API_KEY` | — | Legacy fallback, used only when no connection exists |
+| `OPENCODE_MAX_TOKENS` | 16384 (cloud) / 4096 (local) | AI reply token limit |
+| `AVIO_API_TOKEN`    | — | Backend API token. Set by the app at launch; set it yourself only to test token auth in dev |
+| `AVIO_SECRET_BACKEND` | — | `file` forces the private file store instead of the OS keystore (headless Linux, tests) |
 | `AVIO_DEBUG`        | off | Verbose Salesforce CLI logging (`VENDAVIS_DEBUG` still works) |
 
 ---

@@ -4,6 +4,12 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { api, apiStream } from "../api/client";
+import { CONTINUE_PROMPT } from "../aiBlocks";
+import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
+import ConnectionPicker from "../components/ConnectionPicker";
+import { useConnectionChoice } from "../connections";
+import { useSessionState } from "../sessionStore";
+import { buildChatSystem } from "../chatSystem";
 import Spinner from "../components/Spinner";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES, CATEGORY_ICONS,
@@ -319,29 +325,27 @@ const QUICK_ACTIONS = [
   },
 ];
 
-export default function ClaudeChat({ org, ctx, setCtx }) {
-  const [messages,    setMessages]    = useState([]);
-  const [input,       setInput]       = useState("");
-  const [streaming,   setStreaming]   = useState(false);
+export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
+  // The conversation lives in the session store, not in this component: switching tabs unmounts it.
+  const [messages,    setMessages]    = useSessionState("chat.messages", []);
+  const [input,       setInput]       = useSessionState("chat.input", "");
+  const [streaming,   setStreaming]   = useSessionState("chat.streaming", false);
+  const [truncated,   setTruncated]   = useSessionState("chat.truncated", false);   // last reply hit the token limit
+  const conn = useConnectionChoice("chat");                  // which saved AI connection this tab uses
   const [showHealth,  setShowHealth]  = useState(false);
   const [pendingAction, setPendingAction] = useState(null); // QUICK_ACTIONS entry
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  // The object list loads in the background when this tab opens (once per org; App caches it and
+  // skips a second call). Chat never waits for it: the prompt says whether it is there yet.
+  useEffect(() => {
+    if (org && !ctx.objectsLoaded && !ctx.objectsLoading) loadObjects?.();
+  }, [org?.alias]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   function buildSystem() {
-    const objList = (ctx.objects || [])
-      .map((o, i) => `${i + 1}. ${o.apiName} — ${o.label}`)
-      .join("\n");
-    return [
-      "You are a Salesforce expert assistant embedded in SF Metadata Explorer.",
-      "When the user asks about a Salesforce object, match it against this exact list and use the API name precisely:",
-      "",
-      objList || "(No objects loaded — ask the user to select an org first.)",
-      "",
-      "When you identify an object to query, output a tag: [SELECT_OBJECT: ApiName__c]",
-      "Always use the exact API names from the list above.",
-    ].join("\n");
+    return buildChatSystem(org, ctx);
   }
 
   async function sendChip(prompt) {
@@ -359,20 +363,22 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
     const newMsgs = [...messages, userMsg];
     setMessages(newMsgs);
     setStreaming(true);
+    setTruncated(false);
 
     // Placeholder for assistant reply
     const placeholder = { role: "assistant", content: "" };
     setMessages((m) => [...m, placeholder]);
 
     let full = "";
+    let skills = null;
     await apiStream(
       "/api/ai/chat",
-      { messages: newMsgs, system: buildSystem() },
+      { messages: newMsgs, system: buildSystem(), connection: conn.selected || undefined },
       (delta) => {
         full += delta;
         setMessages((m) => {
           const updated = [...m];
-          updated[updated.length - 1] = { role: "assistant", content: full };
+          updated[updated.length - 1] = { role: "assistant", content: full, skills };
           return updated;
         });
       },
@@ -389,7 +395,9 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           updated[updated.length - 1] = { role: "assistant", content: `❌ ${err}` };
           return updated;
         });
-      }
+      },
+      () => setTruncated(true),  // the model hit its token limit mid-answer
+      (names) => { skills = names; }   // skills the backend really injected (shown once text arrives)
     );
   }
 
@@ -422,19 +430,29 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
       setMessages((m) => [...m, autoPlaceholder]);
 
       let autoFull = "";
+      let autoSkills = null;
       await apiStream(
         "/api/ai/chat",
-        { messages: nextMsgs, system: buildSystem() },
+        { messages: nextMsgs, system: buildSystem(), connection: conn.selected || undefined },
         (delta) => {
           autoFull += delta;
           setMessages((m) => {
             const updated = [...m];
-            updated[updated.length - 1] = { role: "assistant", content: autoFull };
+            updated[updated.length - 1] = { role: "assistant", content: autoFull, skills: autoSkills };
             return updated;
           });
         },
         () => setStreaming(false),
-        (err) => { setStreaming(false); console.error(err); }
+        (err) => {
+          setStreaming(false);
+          setMessages((m) => {
+            const updated = [...m];
+            updated[updated.length - 1] = { role: "assistant", content: `❌ ${err}` };
+            return updated;
+          });
+        },
+        () => setTruncated(true),
+        (names) => { autoSkills = names; }
       );
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: `❌ Failed to load fields: ${e.message}`, system: true }]);
@@ -492,12 +510,15 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
             {a.emoji} {a.label}
           </button>
         ))}
-        {messages.length > 0 && (
-          <button onClick={() => setMessages([])} disabled={streaming}
-            className="ml-auto px-3 py-1 text-xs text-slate-400 hover:text-red-500 transition-colors">
-            🗑 Clear
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} dark={false} />
+          {messages.length > 0 && (
+            <button onClick={() => { setMessages([]); setTruncated(false); }} disabled={streaming}
+              className="px-3 py-1 text-xs text-slate-400 hover:text-red-500 transition-colors">
+              🗑 Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Messages */}
@@ -506,7 +527,15 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           <div className="text-center mt-12 text-sm px-6">
             <img src="/icon-128.png" alt="Avio" className="w-12 h-12 object-contain mx-auto mb-4" />
             <p className="font-semibold text-slate-900 dark:text-gray-100 text-base">Ask me anything about your Salesforce org.</p>
-            <p className="text-slate-400 text-xs mt-2">I know all the objects and fields loaded in this session.</p>
+            <p className="text-slate-400 text-xs mt-2">
+              {!org
+                ? "Select an org to ask about its objects. You can ask general Salesforce questions now."
+                : ctx.objectsLoading
+                ? "Loading your org's objects in the background. You can start chatting now."
+                : ctx.objects?.length
+                ? `I know your org's ${ctx.objects.length} objects, and the fields you open.`
+                : "Ask me anything about Salesforce."}
+            </p>
             <div className="mt-6 grid grid-cols-2 gap-2 max-w-sm mx-auto">
               <button onClick={() => setShowHealth(true)} disabled={!org}
                 className="p-3 bg-white dark:bg-gray-800 hover:bg-slate-50 dark:hover:bg-gray-700/50 border border-slate-200 dark:border-gray-700 rounded-xl text-left transition-colors disabled:opacity-40">
@@ -536,6 +565,7 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
                 : "bg-white dark:bg-gray-800 text-slate-800 dark:text-gray-100 border border-slate-200 dark:border-gray-700 rounded-bl-sm"
             }`}>
               <MarkdownText text={msg.content} />
+              {msg.role === "assistant" && !msg.system && msg.content && <SkillsUsed skills={msg.skills} />}
             </div>
           </div>
         ))}
@@ -543,7 +573,13 @@ export default function ClaudeChat({ org, ctx, setCtx }) {
           <div className="flex justify-start">
             <div className="bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 rounded-2xl rounded-bl-sm px-4 py-2.5">
               <Spinner label="Thinking…" />
+              {!messages[messages.length - 1]?.content && <SlowHint />}
             </div>
+          </div>
+        )}
+        {truncated && !streaming && (
+          <div className="max-w-2xl">
+            <TruncatedNotice onContinue={() => sendMessage(CONTINUE_PROMPT)} />
           </div>
         )}
         <div ref={endRef} />

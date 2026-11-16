@@ -33,3 +33,6 @@ src-tauri/target/
 
 # Session handoff notes live on the dev branch (opencode/mvp-0), not on main
 HANDOFF*
+
+# Developer override for the AI layer; copy opencode.config.example.json to create it
+opencode.config.json

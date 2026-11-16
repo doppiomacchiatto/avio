@@ -21,6 +21,21 @@ const VENV_PYTHON: &str = "bin/python";
 
 struct BackendProcess(Mutex<Option<Child>>);
 struct BackendPort(u16);
+/// Per-launch secret shared with the backend (AVIO_API_TOKEN) and the page (get_api_token).
+/// Without it any web page or local program could call the loopback API and spend the saved
+/// AI credits. Empty in dev, where the backend is started separately and left open.
+struct ApiToken(String);
+
+fn generate_token() -> String {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("the OS random number generator is unavailable");
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Add the token header to a request to our own backend (no-op when there is no token).
+fn with_token(req: reqwest::RequestBuilder, token: &str) -> reqwest::RequestBuilder {
+    if token.is_empty() { req } else { req.bearer_auth(token) }
+}
 
 fn find_free_port() -> u16 {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -46,7 +61,7 @@ fn project_root() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_default()
 }
 
-fn start_backend(port: u16, app_handle: Option<&tauri::AppHandle>) -> Option<Child> {
+fn start_backend(port: u16, token: &str, app_handle: Option<&tauri::AppHandle>) -> Option<Child> {
     // 1. Try bundled binary (production) via Tauri resource resolver
     let bundled = app_handle.and_then(|h| {
         h.path().resource_dir().ok().map(|d| d.join(BACKEND_BIN))
@@ -61,7 +76,7 @@ fn start_backend(port: u16, app_handle: Option<&tauri::AppHandle>) -> Option<Chi
     if let Some(bin) = bundled.filter(|p| p.is_file()) {
         eprintln!("[backend] starting bundled binary: {}", bin.display());
         let mut cmd = Command::new(&bin);
-        cmd.env("SF_BACKEND_PORT", port.to_string());
+        cmd.env("SF_BACKEND_PORT", port.to_string()).env("AVIO_API_TOKEN", token);
         plat.apply_spawn_flags(&mut cmd);
         let child = cmd.spawn().ok();
         if let Some(c) = &child { plat.on_spawned(c); }
@@ -70,7 +85,7 @@ fn start_backend(port: u16, app_handle: Option<&tauri::AppHandle>) -> Option<Chi
         let script = root.join("backend").join("main.py");
         eprintln!("[backend] starting dev server: {} {}", venv_python.display(), script.display());
         let mut cmd = Command::new(&venv_python);
-        cmd.arg(&script).env("SF_BACKEND_PORT", port.to_string());
+        cmd.arg(&script).env("SF_BACKEND_PORT", port.to_string()).env("AVIO_API_TOKEN", token);
         plat.apply_spawn_flags(&mut cmd);
         let child = cmd.spawn().ok();
         if let Some(c) = &child { plat.on_spawned(c); }
@@ -121,6 +136,12 @@ fn get_backend_port(state: State<'_, BackendPort>) -> u16 {
     state.0
 }
 
+/// The per-launch API token the page must send as `Authorization: Bearer <token>`.
+#[tauri::command]
+fn get_api_token(state: State<'_, ApiToken>) -> String {
+    state.0.clone()
+}
+
 /// Turn a failed backend response into a readable error string.
 /// FastAPI errors look like {"detail": "..."}; session-expired errors carry
 /// code "session_expired" and are passed through as just the message so the
@@ -143,10 +164,12 @@ fn http_error(status: reqwest::StatusCode, body: &serde_json::Value) -> String {
 async fn api_get(
     path: String,
     state: tauri::State<'_, BackendPort>,
+    token: tauri::State<'_, ApiToken>,
 ) -> Result<serde_json::Value, String> {
     let port = state.0;
     let url = format!("http://127.0.0.1:{}{}", port, path);
-    let resp = reqwest::get(&url)
+    let resp = with_token(reqwest::Client::new().get(&url), &token.0)
+        .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
     let status = resp.status();
@@ -166,12 +189,12 @@ async fn api_post(
     path: String,
     body: serde_json::Value,
     state: tauri::State<'_, BackendPort>,
+    token: tauri::State<'_, ApiToken>,
 ) -> Result<serde_json::Value, String> {
     let port = state.0;
     let url = format!("http://127.0.0.1:{}{}", port, path);
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
+    let resp = with_token(client.post(&url), &token.0)
         .json(&body)
         .send()
         .await
@@ -227,6 +250,7 @@ async fn restart_backend(
     app: tauri::AppHandle,
     backend: tauri::State<'_, BackendProcess>,
     port_state: tauri::State<'_, BackendPort>,
+    token: tauri::State<'_, ApiToken>,
 ) -> Result<u16, String> {
     let port = port_state.0;
 
@@ -248,7 +272,7 @@ async fn restart_backend(
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        match start_backend(port, Some(&app)) {
+        match start_backend(port, &token.0, Some(&app)) {
             Some(child) => {
                 if let Ok(mut guard) = backend.0.lock() {
                     *guard = Some(child);
@@ -279,14 +303,14 @@ async fn confirm_close(
     app: tauri::AppHandle,
     backend: tauri::State<'_, BackendProcess>,
     port: tauri::State<'_, BackendPort>,
+    token: tauri::State<'_, ApiToken>,
 ) -> Result<(), ()> {
     let backend_port = port.0;
 
     // 1. Ask the backend to shut down gracefully via HTTP (gives uvicorn time
     //    to finish any in-flight request and close its own workers).
     let shutdown_url = format!("http://127.0.0.1:{}/api/shutdown", backend_port);
-    let _ = reqwest::Client::new()
-        .post(&shutdown_url)
+    let _ = with_token(reqwest::Client::new().post(&shutdown_url), &token.0)
         .timeout(std::time::Duration::from_millis(800))
         .send()
         .await;
@@ -327,14 +351,24 @@ fn main() {
         find_free_port()
     };
 
+    // Production: a fresh random token every launch. Dev: the backend is started separately
+    // (npm run dev:backend), so use AVIO_API_TOKEN if the developer set one, else none (open).
+    let token = if cfg!(debug_assertions) {
+        std::env::var("AVIO_API_TOKEN").unwrap_or_default()
+    } else {
+        generate_token()
+    };
+
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(BackendPort(port))
+        .manage(ApiToken(token.clone()))
         .manage(BackendProcess(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_backend_port,
+            get_api_token,
             api_get,
             api_post,
             open_file,
@@ -364,7 +398,7 @@ fn main() {
         .setup(move |app| {
             // In production, spawn the bundled backend binary
             if !cfg!(debug_assertions) {
-                if let Some(child) = start_backend(port, Some(app.handle())) {
+                if let Some(child) = start_backend(port, &token, Some(app.handle())) {
                     if let Ok(mut guard) = app.state::<BackendProcess>().0.lock() {
                         *guard = Some(child);
                     }

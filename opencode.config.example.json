@@ -1,5 +1,5 @@
 {
-  "_comment": "OpenCode provider configuration for Avio. Copy this file and fill in your values. All fields are optional — unset fields fall back to env vars or the Settings modal.",
+  "_comment": "OpenCode provider configuration for Avio. Copy this file to opencode.config.json (git-ignored) and fill in your values. A real opencode.config.json overrides the Settings modal, so leave out any field you do not want to force. This example file is never read. All fields are optional — unset fields fall back to env vars or the Settings modal.",
 
   "provider": "openai",
 
