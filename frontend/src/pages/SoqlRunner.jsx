@@ -13,6 +13,7 @@ import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
+import { useSessionState } from "../sessionStore";
 
 const PAGE_SIZE = 50;
 
@@ -26,13 +27,14 @@ const QUICK_CHIPS = [
 ];
 
 function AiPanel({ query, results, onInsert, onClose }) {
-  const [messages,  setMessages]  = useState([]);
-  const [input,     setInput]     = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [streamBuf, setStreamBuf] = useState("");
-  const [truncated, setTruncated] = useState(false);   // last reply hit the token limit
+  // The conversation lives in the session store, not in this component: switching tabs unmounts it.
+  const [messages,  setMessages]  = useSessionState("soql.ai.messages", []);
+  const [input,     setInput]     = useSessionState("soql.ai.input", "");
+  const [streaming, setStreaming] = useSessionState("soql.ai.streaming", false);
+  const [streamBuf, setStreamBuf] = useSessionState("soql.ai.streamBuf", "");
+  const [truncated, setTruncated] = useSessionState("soql.ai.truncated", false);   // last reply hit the token limit
   const conn = useConnectionChoice("soql");              // which saved AI connection this panel uses
-  const [streamSkills, setStreamSkills] = useState(null); // skills the backend injected into the current reply
+  const [streamSkills, setStreamSkills] = useSessionState("soql.ai.streamSkills", null); // skills the backend injected into the current reply
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -196,7 +198,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   const [historyOpen, setHistoryOpen]= useState(true);
   const [debugLog,    setDebugLog]   = useState([]);
   const [debugOpen,   setDebugOpen]  = useState(false);
-  const [aiOpen,      setAiOpen]     = useState(false);
+  const [aiOpen,      setAiOpen]     = useSessionState("soql.ai.open", false);   // stays open when you return to this tab
 
   // SObject browser — reads from shared ctx
   const objects    = ctx?.objects || [];

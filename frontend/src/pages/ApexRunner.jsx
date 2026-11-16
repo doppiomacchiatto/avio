@@ -6,6 +6,7 @@ import { parseBlocks, isLang, APEX_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
+import { useSessionState } from "../sessionStore";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import { debugLog } from "../debugLog";
@@ -54,15 +55,16 @@ const QUICK_CHIPS = [
 ];
 
 function AiPanel({ code, lastLog, onInsert, onClose, apiVersion }) {
-  const [messages,     setMessages]     = useState([]);
-  const [input,        setInput]        = useState("");
-  const [streaming,    setStreaming]     = useState(false);
-  const [streamBuf,    setStreamBuf]    = useState("");
+  // The conversation lives in the session store, not in this component: switching tabs unmounts it.
+  const [messages,     setMessages]     = useSessionState("apex.ai.messages", []);
+  const [input,        setInput]        = useSessionState("apex.ai.input", "");
+  const [streaming,    setStreaming]     = useSessionState("apex.ai.streaming", false);
+  const [streamBuf,    setStreamBuf]    = useSessionState("apex.ai.streamBuf", "");
   const [exportMsg,    setExportMsg]    = useState(null);   // { ok, text }
   const [overwrite,    setOverwrite]    = useState(null);   // { dir, entries, existing }
-  const [truncated,    setTruncated]    = useState(false);  // last reply hit the token limit
+  const [truncated,    setTruncated]    = useSessionState("apex.ai.truncated", false);  // last reply hit the token limit
   const conn = useConnectionChoice("apex");                   // which saved AI connection this panel uses
-  const [streamSkills, setStreamSkills] = useState(null);     // skills the backend injected into the current reply
+  const [streamSkills, setStreamSkills] = useSessionState("apex.ai.streamSkills", null);  // skills the backend injected into the current reply
   const bottomRef  = useRef(null);
   const version = apiVersion || "68.0";
 
@@ -430,7 +432,7 @@ export default function ApexRunner({ org, onApiCall }) {
   const [resultFilter,setResultFilter]= useState("all");
   const [debugOpen,   setDebugOpen]   = useState(false);
   const [debugLog,    setDebugLog]    = useState([]);
-  const [aiOpen,      setAiOpen]      = useState(false);
+  const [aiOpen,      setAiOpen]      = useSessionState("apex.ai.open", false);   // stays open when you return to this tab
   const [apiVersion,  setApiVersion]  = useState("68.0");  // for generated -meta.xml files
 
   // Look up the connected org's API version in the background (cached by the backend)

@@ -110,6 +110,10 @@ Add a second connection with a different name, for example `OpenAI personal` and
 
 ---
 
+## Your conversations are kept until you close Avio
+
+The AI panel in the Apex Runner and the SOQL Runner, and the AI Chat tab, each keep their conversation while you use other tabs. Switch away and come back and the panel is still open with its history, and anything you had typed but not sent. A reply that finishes while you are on another tab is waiting for you. **Clear** empties a conversation. The history lives in memory only: it is never written to disk, and closing Avio erases it.
+
 ## Choose which connection a panel uses
 
 - The **default** connection (★) is used whenever a panel is left on "Default". Change it with **★ Make default** in Settings.

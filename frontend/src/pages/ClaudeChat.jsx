@@ -8,6 +8,7 @@ import { CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
+import { useSessionState } from "../sessionStore";
 import { buildChatSystem } from "../chatSystem";
 import Spinner from "../components/Spinner";
 import {
@@ -325,10 +326,11 @@ const QUICK_ACTIONS = [
 ];
 
 export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
-  const [messages,    setMessages]    = useState([]);
-  const [input,       setInput]       = useState("");
-  const [streaming,   setStreaming]   = useState(false);
-  const [truncated,   setTruncated]   = useState(false);   // last reply hit the token limit
+  // The conversation lives in the session store, not in this component: switching tabs unmounts it.
+  const [messages,    setMessages]    = useSessionState("chat.messages", []);
+  const [input,       setInput]       = useSessionState("chat.input", "");
+  const [streaming,   setStreaming]   = useSessionState("chat.streaming", false);
+  const [truncated,   setTruncated]   = useSessionState("chat.truncated", false);   // last reply hit the token limit
   const conn = useConnectionChoice("chat");                  // which saved AI connection this tab uses
   const [showHealth,  setShowHealth]  = useState(false);
   const [pendingAction, setPendingAction] = useState(null); // QUICK_ACTIONS entry
