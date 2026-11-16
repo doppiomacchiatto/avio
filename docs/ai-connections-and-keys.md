@@ -45,7 +45,7 @@ You need a key from the provider's **API** console. A chat subscription is not a
 |---|---|---|---|
 | **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | `sk-…` | Needs prepaid credit (minimum $5) under [Billing](https://platform.openai.com/settings/organization/billing/). ChatGPT Plus does not include API access. |
 | **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) → API keys | `sk-ant-…` | A Claude Code login or a Claude Pro/Max subscription cannot be used; you need an API key with credit on the Console. |
-| **OpenCode gateway** | [opencode.ai/auth](https://opencode.ai/auth) | `oc_sk_…` | Add credits first. The gateway's free models only work inside OpenCode itself, not from other apps. Its model list is public, so it appears as soon as you pick this provider, before you enter a key. It lists Gemini models but no Gemma. |
+| **OpenCode gateway** | [opencode.ai/auth](https://opencode.ai/auth) | `oc_sk_…` | Add credits first. The gateway's free models only work inside OpenCode itself, not from other apps. Its model list is public, so it appears as soon as you pick this provider, before you enter a key. It lists Gemini models but no Gemma. Free models are left out of the list because OpenCode says they require its own app; to try one anyway, choose "Other: type a model id" and enter its id. |
 | **Google (Gemini)** | Google AI Studio | `AIza…` | |
 | **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | `sk-or-…` | |
 | **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | `gsk_…` | |

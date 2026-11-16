@@ -335,7 +335,20 @@ def _fetch_public_model_ids(url: str) -> list[str]:
     req = urllib.request.Request(url.rstrip("/") + "/models", headers={"User-Agent": "Avio"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+    return [m["id"] for m in data.get("data", [])
+            if isinstance(m, dict) and m.get("id") and not _is_free_model(m)]
+
+
+def _is_free_model(entry: dict) -> bool:
+    """True for a catalog entry priced at $0 for both input and output text tokens. OpenCode's
+    docs say its free models require the OpenCode app ("use paid models or Go from other
+    clients"), so listing them in Avio would mostly offer models that fail. A missing or odd
+    price is treated as paid, so an unexpected catalog shape never hides models."""
+    try:
+        text = entry["cost"]["text"]
+        return float(text["input"]["price"]) == 0 and float(text["output"]["price"]) == 0
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 class AIClient:
