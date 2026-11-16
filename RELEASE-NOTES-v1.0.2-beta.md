@@ -82,6 +82,7 @@ Get-FileHash .\Avio_1.0.2_x64-setup.exe -Algorithm SHA256
 - Not code-signed (see above)
 - Windows Credential Manager limits a value to about 1,280 characters; longer values fall back to the private file store and Settings warns you
 - Loading a large org's objects can take 20 seconds or more, because each Salesforce CLI call takes several seconds
+- OpenRouter support was tested with Google Gemma through the US region on a Business account. Other OpenRouter models, the EU region, the free plan's Global address and the workspace-filtered model list on other accounts are untested. In the US region only a few providers serve each model (Gemma and Nemotron run only on DeepInfra, for example), so a provider allowlist in your guardrail must include them
 - Small local models are weak at Salesforce code; expect much better results from the cloud connections
 - AI answers can be wrong. Review generated Apex before you deploy it.
 
