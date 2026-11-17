@@ -4,7 +4,7 @@ import { debugLog } from "../debugLog";
 import { useSessionState } from "../sessionStore";
 import {
   RETENTION_DAYS, SURFACES, cleanMessages, defaultFileName, estimateTokens, getMessages, loadIntoSurface,
-  checkFileName, markSaved, parseChatFile, serializeChat, toMarkdown,
+  checkFileName, markSaved, parseChatFile, restoreDismissedKey, serializeChat, toMarkdown,
 } from "../chatHistory";
 
 const THEMES = {
@@ -42,7 +42,7 @@ async function appVersion() {
 export default function AiHistoryStrip({ surface, busy = false, variant = "dark" }) {
   const t = THEMES[variant] || THEMES.dark;
   const [saved, setSaved]         = useState(null);                                   // newest saved copy for this surface
-  const [dismissed, setDismissed] = useSessionState(`${surface}.ai.restoreDismissed`, false);
+  const [dismissed, setDismissed] = useSessionState(restoreDismissedKey(surface), false);
   const [note, setNote]           = useState(null);                                   // { kind: "ok"|"err", text }
   const [pending, setPending]     = useState(null);                                   // a loaded file waiting for Replace / Append
   const fileRef = useRef(null);
@@ -63,7 +63,9 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
       setSaved(d.chats?.[0] || null);
     } catch { setSaved(null); }   // backend not ready or older: just no offer
   }
-  useEffect(() => { refreshSaved(); }, [surface]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The panel stays mounted when a conversation is emptied (Clear, or a Switch Org that saved it),
+  // so look again each time it becomes empty, not only on mount.
+  useEffect(() => { if (!hasMessages) refreshSaved(); }, [surface, hasMessages]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyLoaded(chatMessages, mode, label) {
     loadIntoSurface(surface, chatMessages, mode);

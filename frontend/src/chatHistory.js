@@ -188,9 +188,14 @@ export function loadIntoSurface(surface, incoming, mode) {
   return merged;
 }
 
-export function resetSurface(surface) {
+export const restoreDismissedKey = (surface) => `${surface}.ai.restoreDismissed`;
+
+// `offerRestore` is for a reset that has just saved the conversation: the panel offers it again
+// even if an earlier offer was dismissed.
+export function resetSurface(surface, { offerRestore = false } = {}) {
   setSession(SURFACES[surface].key, []);
   saved.delete(surface);
+  if (offerRestore) setSession(restoreDismissedKey(surface), false);
 }
 
 // Save every unsaved conversation to the app-data folder through `post(path, body)` (the api

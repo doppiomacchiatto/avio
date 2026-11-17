@@ -125,7 +125,7 @@ export default function App() {
     }
     const org = orgSwitch.org;
     setOrgSwitch(null);
-    resetSurface("chat");
+    resetSurface("chat", { offerRestore: save });
     applyOrg(org);
   }
 
