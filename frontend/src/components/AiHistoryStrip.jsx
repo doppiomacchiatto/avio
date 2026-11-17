@@ -4,7 +4,7 @@ import { debugLog } from "../debugLog";
 import { useSessionState } from "../sessionStore";
 import {
   RETENTION_DAYS, SURFACES, cleanMessages, defaultFileName, estimateTokens, getMessages, loadIntoSurface,
-  markSaved, parseChatFile, serializeChat, toMarkdown,
+  checkFileName, markSaved, parseChatFile, serializeChat, toMarkdown,
 } from "../chatHistory";
 
 const THEMES = {
@@ -108,8 +108,8 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
         title: "Save conversation",
         defaultPath: fileName,
         filters: [
-          { name: "Avio conversation (can be loaded again)", extensions: ["json"] },
-          { name: "Markdown (readable text)", extensions: ["md"] },
+          { name: "Avio conversation (.json: can be loaded again)", extensions: ["json"] },
+          { name: "Readable text (.md: for reading only, cannot be loaded)", extensions: ["md"] },
         ],
       });
       if (!path) return;                                       // cancelled
@@ -121,7 +121,8 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
         content: isMd ? toMarkdown(chat) : JSON.stringify(chat, null, 2) + "\n",
       });
       markSaved(surface);
-      say("ok", `Saved ${plural(chat.messages.length, "message")} to ${finalPath}`);
+      say("ok", `Saved ${plural(chat.messages.length, "message")} to ${finalPath}` +
+        (isMd ? ". This readable copy cannot be loaded back: save as .json to continue it later." : ""));
     } catch (e) {
       debugLog(`Save conversation failed: ${e?.message || e}`, "error");
       say("err", `Could not save the conversation: ${e?.message || e}`);
@@ -133,6 +134,8 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
     const file = e.target.files?.[0];
     e.target.value = "";                                       // allow picking the same file again
     if (!file) return;
+    const wrongType = checkFileName(file.name);
+    if (wrongType) { say("err", wrongType); return; }
     let text;
     try { text = await file.text(); } catch { say("err", "That file could not be read."); return; }
     const r = parseChatFile(text);
@@ -185,7 +188,7 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
           onClick={saveToFile}
           disabled={!hasMessages}
           className={`${small} ${t.btn}`}
-          title={`Save this conversation to a file (.json to load again, .md to read). Avio also offers to keep it for ${RETENTION_DAYS} days when you close the app.`}
+          title={`Save this conversation to a file: .json to load again later, .md only to read. Avio also offers to keep it for ${RETENTION_DAYS} days when you close the app.`}
         >
           💾 Save
         </button>

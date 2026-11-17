@@ -83,6 +83,15 @@ export function toMarkdown(chat) {
   return lines.join("\n");
 }
 
+// Explains a file the user picked by name before it is read, or returns null if it may be a conversation.
+// A Markdown export is for reading: it cannot be loaded back, so say so instead of "not valid JSON".
+export function checkFileName(name) {
+  if (/\.(md|markdown|txt)$/i.test(String(name || ""))) {
+    return "That is a readable text export, which Avio cannot load back. To continue a conversation later, save it as .json (Save, then choose the Avio conversation type) and load that file.";
+  }
+  return null;
+}
+
 // Returns { ok: true, chat: { surface, title, savedAt, messages, ignored } } or { ok: false, error }.
 // `ignored` counts entries that were dropped (UI notices, unknown roles, empty text).
 export function parseChatFile(text) {
