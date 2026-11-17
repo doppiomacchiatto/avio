@@ -9,7 +9,7 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 
 | Area | State |
 |---|---|
-| Release candidate build | Installed locally from `e4570fc`; **manually verified by the developer 2026-11-14, no issues** (the `HANDOFF-2026-11-14.md` checklist). Installer hashes re-checked against the release notes; no app-code difference between the tag and the dev tip |
+| Release candidate build | Installed locally from `e4570fc`; **manually verified by the developer 2026-11-14, no issues** (the `HANDOFF-2026-11-15.md` checklist). Installer hashes re-checked against the release notes; no app-code difference between the tag and the dev tip |
 | Tag `v1.0.1-beta` | Created 2026-11-14 on `main` merge commit `50e3c4a` (annotated, pushed). The tagged code was verified by the developer. If code changes before publishing, merge to `main` and move the tag (`git tag -d`, `git push origin :refs/tags/v1.0.1-beta`, re-tag), then rebuild and recompute the hashes |
 | Windows signing | On hold. Waiting for the developer to sign up for Azure and report back; do not start before then (the repo-side steps need the endpoint/account/profile names) |
 | macOS signing | Not started |
@@ -22,7 +22,7 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 
 ## 1a. Next release: v1.0.2-beta (AI fixes, saved connections, keystore, API token)
 
-`v1.0.1-beta` ships with the 4,096-token reply limit and no truncation warning, so long Apex answers from reasoning models are cut off silently, and local (Ollama) models lose most of the skill text. It also keeps the API key in a plain-text file and has an unauthenticated local API. The fixes are on `opencode/mvp-0` (see `HANDOFF-2026-11-14.md`: "AI provider testing and fixes" and "AI connections, OS-keystore keys and API token").
+`v1.0.1-beta` ships with the 4,096-token reply limit and no truncation warning, so long Apex answers from reasoning models are cut off silently, and local (Ollama) models lose most of the skill text. It also keeps the API key in a plain-text file and has an unauthenticated local API. The fixes are on `opencode/mvp-0` (see `HANDOFF-2026-11-15.md`: "AI provider testing and fixes" and "AI connections, OS-keystore keys and API token").
 
 **Behaviour change to announce in the notes:** the first launch moves the saved API key into the OS keystore (Windows Credential Manager) as a "Default" connection and deletes the plain-text file; older versions can't read it afterwards.
 
@@ -38,7 +38,7 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 
 ## 1. Before the first release
 
-- [x] Run the verification checklist in `HANDOFF-2026-11-14.md` against the installed build (Save, skills, folder pickers, Ko-fi, dark mode): passed, no issues (2026-11-14)
+- [x] Run the verification checklist in `HANDOFF-2026-11-15.md` against the installed build (Save, skills, folder pickers, Ko-fi, dark mode): passed, no issues (2026-11-14)
 - [x] Fix anything that fails, rebuild, re-verify: nothing to fix
 - [x] Tag `main` (2026-11-14): `v1.0.1-beta` on `50e3c4a`, the merge of dev `e4570fc`+docs into `main` (handoffs excluded). App code is identical to the build that was installed for testing.
 - [ ] Decide the artifact names. Tauri produces `Avio_1.0.1_x64-setup.exe` (NSIS, the main download) and `Avio_1.0.1_x64_en-US.msi`
@@ -96,7 +96,7 @@ Record (non-secret):
 
 ## 3. macOS build, then signing and notarization
 
-**Next up (the developer is moving to a Mac).** Build and smoke-test first; the full plan, prerequisites and the risk list from the 2026-11-14 code audit are in `HANDOFF-2026-11-14.md` ("Next: macOS").
+**Next up (the developer is moving to a Mac).** Build and smoke-test first; the full plan, prerequisites and the risk list from the 2026-11-14 code audit are in `HANDOFF-2026-11-15.md` ("Next: macOS").
 
 - [ ] **Add PyInstaller to the build requirements** (`pyinstaller` is not in `backend/requirements.txt`, so a fresh checkout fails at `npm run build:backend`); update the README "Dev setup"
 - [ ] Build on a Mac (`npm run tauri:build`; Python 3.11/3.12 venv). PyInstaller builds for the host CPU, so one `.dmg` per architecture (arm64 / x86_64)
