@@ -143,6 +143,14 @@ Where they are: `chats\` inside Avio's data folder (see the README's "User data"
 
 ---
 
+## Stop a reply, and long waits
+
+While a reply is coming in, the **↑ / Send** button turns into a red **■ Stop** button. **Stop** ends the reply at once and keeps what had arrived, marked "Stopped by you. This answer is incomplete." Avio also closes the connection to the provider, so it stops generating and you stop paying for tokens you won't read. If nothing had arrived yet, nothing is added to the conversation. You can send again straight away.
+
+Some models take a long time before the first word, especially **reasoning models** such as Grok, which think first: a minute or two is normal. After 8 seconds without any text, the panel says "Still waiting for the model" and reminds you about Stop. (A local model may be loading instead, and the hint says so for local connections.)
+
+If a provider goes completely silent, Avio gives up on its own: **5 minutes** for cloud providers, **15 minutes** for local models, and then says "No reply from … so Avio stopped waiting." Set `chat_timeout_seconds` in `config.json` to change it (see "Advanced").
+
 ## See which skills a reply used
 
 Avio adds Salesforce guidance ("skills") to the request, depending on the panel and your prompt. Under each AI reply, a **🧠 Skills used** line lists what was actually added, for example `Apex Generate, Apex Test Generate`, or `none`. It comes from Avio's backend, so it is reliable. A model's own answer to "is the skill loaded?" is not: it can only guess. In local mode, built-in skills are labelled `(condensed)`.
@@ -226,6 +234,7 @@ These are for developers and scripted setups. Normal use never needs them.
 | `opencode.config.json` | project root (git-ignored; copy `opencode.config.example.json`) | Same overrides from a file; only applies when running from source. |
 | `max_tokens` / `OPENCODE_MAX_TOKENS` | `config.json` / environment | Reply token limit (default 16,384 cloud, 4,096 local). |
 | `skills_local_budget` | `config.json` | Characters of Salesforce guidance sent to local models (`0` none, `-1` everything). |
+| `chat_timeout_seconds` | `config.json` | How long a reply may stay completely silent before Avio stops waiting (10 to 3600). Default 300 (5 minutes) for cloud models and 900 (15 minutes) for local ones. |
 | `AVIO_SECRET_BACKEND=file` | environment | Force the private file store instead of the system keystore. |
 
 How overrides combine: a panel with a specific connection chosen **ignores** overrides; a panel on "Default" uses the default connection with any override applied on top. An override that points at a different host never uses a saved key; supply `OPENCODE_API_KEY` with it.
@@ -245,6 +254,8 @@ How overrides combine: a panel with a specific connection chosen **ignores** ove
 | **"The provider stopped the reply with an error"** | The provider reported a problem after it had started answering (OpenRouter does this). Earlier versions ended such a reply silently and looked like a short answer. Retry; the message includes the provider's reason. |
 | **404 "model … not found"** | That model isn't available to your key, or the id you typed under "Other" is misspelled. Click **↻ Refresh list** and choose one from it. |
 | **"Couldn't fetch models — showing built-in list"** | The provider rejected the key or URL, or it is unreachable. The list shown is a built-in fallback for that provider; fix the key or URL and refresh. |
+| **"No reply from … so Avio stopped waiting."** | The provider didn't send anything for 5 minutes (15 for a local model). It may be overloaded or down, or the model was thinking a very long time. Send again; if it repeats, pick another model, or one that more than one host serves. To wait longer, set `chat_timeout_seconds` in `config.json`. |
+| **A reply seems stuck** | Press **■ Stop**, then send again. Quitting Avio also always works. |
 | **"That saved conversation no longer exists"** | Saved conversations are deleted 3 days after saving (or you deleted it). Use 💾 Save in a panel to keep one as a file. |
 | **"That file is not an Avio conversation"** (Load) | Load needs a `.json` file saved with 💾 Save in Avio. A `.md` export is for reading only. |
 | **"Could not save …"** in the close dialog | Avio stays open so nothing is lost. Free some disk space or use 💾 Save to write the conversation somewhere else, then close again. |

@@ -3,9 +3,9 @@
  * fuzzy object matching, field loading, SOQL generation.
  */
 import { useState, useRef, useEffect } from "react";
-import { api, apiStream } from "../api/client";
+import { api, apiStream, stopStream } from "../api/client";
 import { CONTINUE_PROMPT } from "../aiBlocks";
-import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
+import { SlowHint, StopButton, StoppedNotice, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
@@ -398,8 +398,22 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
         });
       },
       () => setTruncated(true),  // the model hit its token limit mid-answer
-      (names) => { skills = names; }   // skills the backend really injected (shown once text arrives)
+      (names) => { skills = names; },   // skills the backend really injected (shown once text arrives)
+      { surface: "chat" },
     );
+  }
+
+  // Stop: keep what has arrived (marked as stopped); an empty placeholder is dropped. The backend closes
+  // the provider connection.
+  function stopReply() {
+    if (!stopStream("chat")) return;
+    setMessages((m) => {
+      const last = m[m.length - 1];
+      if (!last || last.role !== "assistant" || last.system) return m;
+      return last.content ? [...m.slice(0, -1), { ...last, stopped: true }] : m.slice(0, -1);
+    });
+    setStreaming(false);
+    setTruncated(false);
   }
 
   async function handleSelectObject(apiName, prevMsgs, prevReply) {
@@ -453,7 +467,8 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           });
         },
         () => setTruncated(true),
-        (names) => { autoSkills = names; }
+        (names) => { autoSkills = names; },
+        { surface: "chat" },
       );
     } catch (e) {
       setMessages((m) => [...m, { role: "assistant", content: `❌ Failed to load fields: ${e.message}`, system: true }]);
@@ -569,6 +584,7 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
             }`}>
               <MarkdownText text={msg.content} />
               {msg.role === "assistant" && !msg.system && msg.content && <SkillsUsed skills={msg.skills} />}
+              {msg.stopped && <StoppedNotice />}
             </div>
           </div>
         ))}
@@ -576,7 +592,7 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           <div className="flex justify-start">
             <div className="bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700 rounded-2xl rounded-bl-sm px-4 py-2.5">
               <Spinner label="Thinking…" />
-              {!messages[messages.length - 1]?.content && <SlowHint />}
+              {!messages[messages.length - 1]?.content && <SlowHint local={conn.isLocal} />}
             </div>
           </div>
         )}
@@ -601,13 +617,17 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           }}
           disabled={streaming}
         />
-        <button
-          onClick={() => sendMessage()}
-          disabled={streaming || !input.trim()}
-          className="px-4 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-xl text-sm font-medium self-end transition-colors"
-        >
-          Send
-        </button>
+        {streaming ? (
+          <StopButton onStop={stopReply} className="px-4 py-2 rounded-xl text-sm self-end" />
+        ) : (
+          <button
+            onClick={() => sendMessage()}
+            disabled={!input.trim()}
+            className="px-4 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-xl text-sm font-medium self-end transition-colors"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );

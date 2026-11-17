@@ -5,12 +5,12 @@
  * Right: OpenCode AI split panel (toggleable)
  */
 import { useState, useEffect, useRef } from "react";
-import { api, apiStream } from "../api/client";
+import { api, apiStream, stopStream } from "../api/client";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
 import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
-import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
+import { SlowHint, StopButton, StoppedNotice, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
@@ -91,7 +91,17 @@ Be concise and direct.`;
       },
       () => setTruncated(true),   // the model hit its token limit mid-answer
       (names) => { skills = names; setStreamSkills(names); },   // skills the backend really injected
+      { surface: "soql" },
     );
+  }
+
+  // Stop: keep what has arrived (marked as stopped) and free the panel. The backend closes the provider connection.
+  function stopReply() {
+    if (!stopStream("soql")) return;
+    if (streamBuf.trim()) {
+      setMessages(prev => [...prev, { role: "assistant", content: streamBuf, skills: streamSkills, stopped: true }]);
+    }
+    setStreaming(false); setStreamBuf(""); setStreamSkills(null); setTruncated(false);
   }
 
   function AssistantMessage({ content }) {
@@ -150,7 +160,7 @@ Be concise and direct.`;
           <div key={i} className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
             {msg.role === "user"
               ? <div className="max-w-[90%] bg-blue-600 text-white text-xs px-3 py-2 rounded-2xl rounded-tr-sm">{msg.content}</div>
-              : <div className="w-full"><AssistantMessage content={msg.content} /><SkillsUsed skills={msg.skills} dark /></div>
+              : <div className="w-full"><AssistantMessage content={msg.content} /><SkillsUsed skills={msg.skills} dark />{msg.stopped && <StoppedNotice dark />}</div>
             }
           </div>
         ))}
@@ -159,7 +169,7 @@ Be concise and direct.`;
           <div className="text-xs text-slate-300">
             <div className="flex items-center gap-2"><Spinner label="" /><span>Thinking…</span></div>
             <SkillsUsed skills={streamSkills} dark />
-            <SlowHint dark />
+            <SlowHint dark local={conn.isLocal} />
           </div>
         )}
         {truncated && !streaming && (
@@ -179,8 +189,10 @@ Be concise and direct.`;
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
             rows={1}
           />
-          <button onClick={() => sendMessage(input)} disabled={streaming || !input.trim()}
-            className="shrink-0 px-3 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-lg text-xs font-semibold">↑</button>
+          {streaming
+            ? <StopButton onStop={stopReply} className="px-3 py-2 rounded-lg text-xs" />
+            : <button onClick={() => sendMessage(input)} disabled={!input.trim()}
+                className="shrink-0 px-3 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-lg text-xs font-semibold">↑</button>}
         </div>
         <p className="text-xs text-slate-400 mt-1">↵ send · Shift+↵ newline</p>
       </div>

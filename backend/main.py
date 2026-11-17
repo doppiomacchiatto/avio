@@ -914,6 +914,18 @@ class ChatRequest(BaseModel):
     model:       Optional[str]  = None   # override from settings
     force_skills: Optional[list[str]] = None   # skills to inject regardless of keywords
     connection:  Optional[str]  = None         # saved connection id (see /api/ai/connections); default if omitted
+    request_id:  Optional[str]  = None         # lets /api/ai/chat/cancel stop this reply
+
+
+class CancelChatBody(BaseModel):
+    request_id: str
+
+
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+
+
+def _clean_request_id(value: Optional[str]) -> Optional[str]:
+    return value if value and _REQUEST_ID_RE.fullmatch(value) else None
 
 
 def _sse_error(message: str) -> StreamingResponse:
@@ -939,7 +951,7 @@ def ai_chat(req: ChatRequest):
             # Tell the UI which skills were really injected (first event, even when none).
             yield f"data: {json.dumps({'skills': skill_names})}\n\n"
             for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None,
-                                    resolved=resolved):
+                                    resolved=resolved, request_id=_clean_request_id(req.request_id)):
                 if isinstance(chunk, StreamFinish):
                     if chunk.truncated:   # the model hit its token limit mid-answer
                         yield f"data: {json.dumps({'truncated': True})}\n\n"
@@ -949,6 +961,15 @@ def ai_chat(req: ChatRequest):
         except Exception as e:
             yield f"data: {json.dumps({'error': describe_error(e, resolved, req.model or resolved.model)})}\n\n"
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+@app.post("/api/ai/chat/cancel")
+def ai_chat_cancel(body: CancelChatBody):
+    """The Stop button: close the provider connection of a reply that is still streaming."""
+    rid = _clean_request_id(body.request_id)
+    if not rid:
+        raise HTTPException(400, "Invalid request id.")
+    return {"ok": True, "stopped": _ai.cancel(rid)}
+
 
 # Keep old path as alias for backwards compatibility during migration
 @app.post("/api/claude/chat")

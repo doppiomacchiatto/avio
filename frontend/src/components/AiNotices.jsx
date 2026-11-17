@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 
-// Shown while waiting for the first token. The first request to a local model (Ollama)
-// can take a minute or two while the model loads, and a bare spinner looks like a hang.
+// Shown while waiting for the first token, so a long wait does not look like a hang. A local model
+// (Ollama) may be loading; a cloud reasoning model may be thinking before its first word.
 // Mount it only while waiting so the timer restarts for every request.
-export function SlowHint({ after = 8, dark = false }) {
+export function SlowHint({ after = 8, dark = false, local = false }) {
   const [secs, setSecs] = useState(0);
   useEffect(() => {
     const t0 = Date.now();
@@ -13,8 +13,33 @@ export function SlowHint({ after = 8, dark = false }) {
   if (secs < after) return null;
   return (
     <p className={`text-xs mt-1 ${dark ? "text-amber-300" : "text-amber-600 dark:text-amber-400"}`}>
-      Still waiting for the model ({secs}s). The first request to a local model can take a minute
-      or two while it loads.
+      Still waiting for the model ({secs}s).{" "}
+      {local
+        ? "The first request to a local model can take a minute or two while it loads."
+        : "Reasoning models can take a minute or two before the first word."}
+      {" "}You can press Stop to cancel.
+    </p>
+  );
+}
+
+// Replaces the Send button while a reply is streaming. `onStop` is the panel's stopReply().
+export function StopButton({ onStop, className = "", children = "■ Stop" }) {
+  return (
+    <button
+      onClick={onStop}
+      title="Stop this reply. What has arrived so far is kept."
+      className={`shrink-0 bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Under a reply the user stopped. The text above is what arrived before Stop, so it may end mid-sentence.
+export function StoppedNotice({ dark = false }) {
+  return (
+    <p className={`text-[11px] leading-snug ${dark ? "text-amber-300" : "text-amber-600 dark:text-amber-400"}`}>
+      ■ Stopped by you. This answer is incomplete.
     </p>
   );
 }
