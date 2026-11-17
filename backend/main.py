@@ -36,6 +36,7 @@ import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
 from ai_client import AIClient, StreamFinish, describe_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+import chat_store
 import connections
 import org_login
 import secret_store
@@ -52,6 +53,11 @@ async def _lifespan(app: FastAPI):
         connections.migrate_legacy()
     except Exception as e:
         log.warning("API key migration skipped: %s", type(e).__name__)
+    # Saved AI conversations are kept for a few days only.
+    try:
+        chat_store.purge_expired()
+    except Exception as e:
+        log.warning("Saved-chat cleanup skipped: %s", type(e).__name__)
     yield
 
 
@@ -348,6 +354,57 @@ def default_connection_route(body: ConnectionIdBody):
     except connections.UnknownConnection:
         raise HTTPException(404, "That connection no longer exists.")
     return {"ok": True}
+
+
+class SaveChatBody(BaseModel):
+    surface:  str
+    messages: list[dict]
+    title:    Optional[str] = None
+
+class ChatIdBody(BaseModel):
+    id: str
+
+
+@app.get("/api/chats")
+def list_chats_route(surface: Optional[str] = None):
+    try:
+        return {"chats": chat_store.list_chats(surface), "retention_days": chat_store.RETENTION_DAYS}
+    except chat_store.InvalidChat as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/chats/{chat_id}")
+def get_chat_route(chat_id: str):
+    try:
+        return chat_store.get_chat(chat_id)
+    except chat_store.UnknownChat:
+        raise HTTPException(404, "That saved conversation no longer exists (saved chats are kept for "
+                                 f"{chat_store.RETENTION_DAYS} days).")
+
+
+@app.post("/api/chats")
+def save_chat_route(body: SaveChatBody):
+    try:
+        return chat_store.save_chat(body.surface, body.messages, body.title)
+    except chat_store.InvalidChat as e:
+        raise HTTPException(400, str(e))
+    except OSError as e:
+        raise HTTPException(500, f"Could not save the conversation: {e.strerror or type(e).__name__}")
+
+
+# POST aliases: the desktop client only sends GET and POST.
+@app.post("/api/chats/delete")
+def delete_chat_route(body: ChatIdBody):
+    try:
+        chat_store.delete_chat(body.id)
+    except chat_store.UnknownChat:
+        raise HTTPException(404, "That saved conversation no longer exists.")
+    return {"ok": True}
+
+
+@app.post("/api/chats/delete-all")
+def delete_all_chats_route():
+    return {"ok": True, "deleted": chat_store.delete_all()}
 
 
 class SkillsTestRequest(BaseModel):

@@ -13,6 +13,7 @@ import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
 import { api, waitForBackend, isTauri, openExternal, isLocalUrl } from "./api/client";
 import { loadConnections } from "./connections";
 import { debugLog, useDebugLog } from "./debugLog";
+import { RETENTION_DAYS, unsavedChats, hasUnsavedChats, saveUnsavedToApp, resetSurface } from "./chatHistory";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -39,12 +40,26 @@ export default function App() {
 
   // ── Quit confirm modal ─────────────────────────────────────────────────────
   const [quitConfirm,   setQuitConfirm]   = useState(false);
+  const [quitUnsaved,   setQuitUnsaved]   = useState([]);     // AI conversations not saved yet: [{surface, label, count}]
+  const [quitBusy,      setQuitBusy]      = useState(false);
+  const [quitError,     setQuitError]     = useState("");
+  const postJson = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
+
+  // Browser dev mode has no close dialog of its own: let the browser warn about unsaved chats.
+  useEffect(() => {
+    if (isTauri()) return undefined;
+    const warn = (e) => { if (hasUnsavedChats()) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
 
   // Listen for Tauri window events
   useEffect(() => {
     let unlistenClose, unlistenAbout;
     // Close button → show confirm dialog
     listen("app:close-requested", () => {
+      setQuitUnsaved(unsavedChats());
+      setQuitError("");
       setQuitConfirm(true);
     }).then((fn) => { unlistenClose = fn; });
     // macOS "About Avio" menu item → open our in-app About modal
@@ -58,13 +73,60 @@ export default function App() {
     };
   }, []);
 
-  async function handleQuitYes() {
+  // save = keep the unsaved AI conversations in the app-data folder first. This must finish before
+  // confirm_close, which stops the backend. If saving fails we stay open so nothing is lost.
+  async function handleQuitYes(save = false) {
+    if (save && quitUnsaved.length) {
+      setQuitBusy(true);
+      setQuitError("");
+      const r = await saveUnsavedToApp(postJson);
+      setQuitBusy(false);
+      if (r.failed.length) {
+        setQuitUnsaved(unsavedChats());
+        setQuitError(`Could not save ${r.failed.map((f) => f.label).join(", ")}: ${r.failed[0].error.split("\n")[0]}`);
+        return;
+      }
+    }
     setQuitConfirm(false);
     await invoke("confirm_close");
   }
 
   function handleQuitNo() {
+    if (quitBusy) return;
     setQuitConfirm(false);
+  }
+
+  const [chatsDeleteMsg, setChatsDeleteMsg] = useState("");
+  async function deleteSavedChats() {
+    setChatsDeleteMsg("");
+    try {
+      const r = await postJson("/api/chats/delete-all", {});
+      setChatsDeleteMsg(r.deleted ? `Deleted ${r.deleted} saved ${r.deleted === 1 ? "conversation" : "conversations"}.` : "There were none to delete.");
+    } catch (e) {
+      setChatsDeleteMsg(`Could not delete: ${String(e?.message || e).split("\n")[0]}`);
+    }
+  }
+
+  // ── Switching to a different org starts a new AI Chat (its object list belongs to the old org) ──
+  const [orgSwitch, setOrgSwitch] = useState(null);   // { org, count } while we ask what to do with an unsaved AI Chat
+  const [orgSwitchBusy, setOrgSwitchBusy] = useState(false);
+  const [orgSwitchError, setOrgSwitchError] = useState("");
+
+  async function finishOrgSwitch(save) {
+    if (save) {
+      setOrgSwitchBusy(true);
+      setOrgSwitchError("");
+      const r = await saveUnsavedToApp(postJson, ["chat"]);
+      setOrgSwitchBusy(false);
+      if (r.failed.length) {
+        setOrgSwitchError(`Could not save the conversation: ${r.failed[0].error.split("\n")[0]}`);
+        return;
+      }
+    }
+    const org = orgSwitch.org;
+    setOrgSwitch(null);
+    resetSurface("chat");
+    applyOrg(org);
   }
 
   // ── Welcome modal (shown once on first launch) ────────────────────────────
@@ -435,6 +497,15 @@ export default function App() {
   }
 
   function handleOrgSelect(org) {
+    if (activeOrg && activeOrg.alias !== org.alias) {
+      const unsaved = unsavedChats().find((u) => u.surface === "chat");
+      if (unsaved) { setOrgSwitchError(""); setOrgSwitch({ org, count: unsaved.count }); return; }
+      resetSurface("chat");
+    }
+    applyOrg(org);
+  }
+
+  function applyOrg(org) {
     setActiveOrg(org);
     setOrgContext({ objects: [], fields: {}, objectsLoading: false, objectsLoaded: false });
     setApiLimits(null);
@@ -505,7 +576,7 @@ export default function App() {
       {/* Quit confirm modal */}
       {quitConfirm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-[380px] p-8 flex flex-col gap-6">
+          <div className={`bg-white dark:bg-gray-800 rounded-2xl shadow-2xl ${quitUnsaved.length ? "w-[460px]" : "w-[380px]"} p-8 flex flex-col gap-6`}>
             {/* Icon + heading */}
             <div className="flex flex-col items-center gap-3 text-center">
               <div className="w-14 h-14 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-3xl">
@@ -516,19 +587,97 @@ export default function App() {
                 Avio is running a local data service. Closing the app will stop it — any in-progress exports or queries will be cancelled.
               </p>
             </div>
+            {/* Unsaved AI conversations */}
+            {quitUnsaved.length > 0 && (
+              <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-gray-800 dark:text-gray-200">
+                <p className="font-semibold">You have unsaved AI conversations:</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {quitUnsaved.map((u) => (
+                    <li key={u.surface}>{u.label} ({u.count} {u.count === 1 ? "message" : "messages"})</li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+                  <strong>Save</strong> keeps them on this computer for {RETENTION_DAYS} days as plain text (they can contain
+                  your Salesforce code and data) and offers to restore them next time. <strong>Discard</strong> loses them.
+                </p>
+              </div>
+            )}
+            {quitError && (
+              <p role="alert" className="text-sm text-red-600 dark:text-red-400">{quitError}</p>
+            )}
             {/* Actions */}
             <div className="flex gap-3">
               <button
                 onClick={handleQuitNo}
-                className="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                disabled={quitBusy}
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              {quitUnsaved.length > 0 ? (
+                <>
+                  <button
+                    onClick={() => handleQuitYes(false)}
+                    disabled={quitBusy}
+                    className="flex-1 py-2.5 rounded-xl border border-red-400 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold text-sm transition-colors disabled:opacity-50"
+                  >
+                    Discard &amp; Quit
+                  </button>
+                  <button
+                    onClick={() => handleQuitYes(true)}
+                    disabled={quitBusy}
+                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-colors disabled:opacity-50"
+                  >
+                    {quitBusy ? "Saving…" : "Save & Quit"}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => handleQuitYes(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm transition-colors"
+                >
+                  Stop &amp; Quit
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Switching org with an unsaved AI Chat */}
+      {orgSwitch && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110]">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-[400px] p-8 flex flex-col gap-5">
+            <div className="text-center">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white">Start a new AI Chat?</h2>
+              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+                Your AI Chat ({orgSwitch.count} {orgSwitch.count === 1 ? "message" : "messages"}) knows about the org you are leaving, so
+                switching to <strong>{orgSwitch.org.alias}</strong> starts a new chat. Keep the old one for {RETENTION_DAYS} days
+                (plain text on this computer), or discard it?
+              </p>
+            </div>
+            {orgSwitchError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{orgSwitchError}</p>}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setOrgSwitch(null)}
+                disabled={orgSwitchBusy}
+                className="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
-                onClick={handleQuitYes}
-                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm transition-colors"
+                onClick={() => finishOrgSwitch(false)}
+                disabled={orgSwitchBusy}
+                className="flex-1 py-2.5 rounded-xl border border-red-400 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold text-sm disabled:opacity-50"
               >
-                Stop &amp; Quit
+                Discard &amp; switch
+              </button>
+              <button
+                onClick={() => finishOrgSwitch(true)}
+                disabled={orgSwitchBusy}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm disabled:opacity-50"
+              >
+                {orgSwitchBusy ? "Saving…" : "Save & switch"}
               </button>
             </div>
           </div>
@@ -1229,6 +1378,25 @@ export default function App() {
                     ))}
                   </div>
                 </label>
+
+                <div className="flex flex-col gap-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 p-3">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">Saved AI conversations</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                    When you close Avio you can keep your AI conversations. They are stored on this computer as plain text
+                    (they can contain Salesforce code and data) and deleted automatically after {RETENTION_DAYS} days.
+                    Files you save yourself with 💾 Save are not touched.
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={deleteSavedChats}
+                      className="self-start px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 text-xs font-medium hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    >
+                      Delete all saved conversations
+                    </button>
+                    {chatsDeleteMsg && <span className="text-xs text-gray-500 dark:text-gray-400" role="status">{chatsDeleteMsg}</span>}
+                  </div>
+                </div>
               </div>
             )}
 

@@ -9,6 +9,7 @@ import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
+import AiHistoryStrip from "../components/AiHistoryStrip";
 import { buildChatSystem } from "../chatSystem";
 import Spinner from "../components/Spinner";
 import {
@@ -520,6 +521,8 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           )}
         </div>
       </div>
+
+      <AiHistoryStrip surface="chat" busy={streaming} variant="auto" />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">

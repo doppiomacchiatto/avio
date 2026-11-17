@@ -56,6 +56,7 @@ avio/
 │   ├── sf_cli.py             # Salesforce CLI wrappers (delegates to platform_env)
 │   ├── platform_env.py       # OS-specific PATH, tool discovery, Avio data dir
 │   ├── ai_client.py          # Provider-neutral AI client (OpenAI-compatible APIs)
+│   ├── chat_store.py         # Saved AI conversations (kept 3 days, app-data folder)
 │   ├── sf_skills.py          # Salesforce skill context injected into AI prompts
 │   ├── sf_skills/            # Bundled skills (platform-apex-generate, platform-soql-query)
 │   ├── excel_builder.py      # Excel workbook generation (FLS / object access)
@@ -73,6 +74,7 @@ avio/
 │       ├── App.jsx           # Shell UI: tabs, org picker, settings, About
 │       ├── api/client.js     # Backend client, isTauri(), native dialog helpers
 │       ├── apexExport.js     # Pure helpers: Apex → .cls/.trigger + meta.xml
+│       ├── chatHistory.js    # AI conversation save/load format, validation, unsaved tracking
 │       ├── components/       # OrgPickerModal, TabBar, DebugLogModal, Spinner, …
 │       ├── data/             # Static data (Org Health checks)
 │       └── pages/            # FlsExplorer, ProfilesExplorer, SoqlRunner, ApexRunner,
@@ -93,6 +95,7 @@ avio/
 | Query & execute | `/api/soql`, `/api/soql/history`, `/api/apex`, `…/rest` (REST proxy) |
 | Export | `/api/export`, `/api/export/principal` (Excel workbooks, streamed progress) |
 | AI | `/api/ai/chat` (SSE), `/api/models`, `/api/ai/skills*` (skill sources, fetch, remove) |
+| Saved AI conversations | `/api/chats` (list, save), `/api/chats/{id}`, `/api/chats/delete`, `/api/chats/delete-all` |
 
 ---
 
@@ -223,11 +226,11 @@ npx tauri build
 
 | OS | Location |
 |---|---|
-| Windows | `%APPDATA%\Avio\` (`config.json`, `skills\`, `query_history.db`, `vr_snapshots.json`) |
+| Windows | `%APPDATA%\Avio\` (`config.json`, `skills\`, `chats\`, `query_history.db`, `vr_snapshots.json`) |
 | macOS | `~/.avio/` |
 | Linux | `$XDG_DATA_HOME/avio/` (default `~/.local/share/avio/`) |
 
-AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
+`chats\` holds AI conversations you chose to keep when closing Avio (plain text, deleted automatically after 3 days; see [docs/ai-connections-and-keys.md](docs/ai-connections-and-keys.md)). AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
 
 ## Logging in to a Salesforce org
 

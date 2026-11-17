@@ -14,6 +14,7 @@ import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
+import AiHistoryStrip from "../components/AiHistoryStrip";
 
 const PAGE_SIZE = 50;
 
@@ -124,6 +125,8 @@ Be concise and direct.`;
           <button onClick={onClose} className="text-slate-300 hover:text-white text-sm">✕</button>
         </div>
       </div>
+
+      <AiHistoryStrip surface="soql" busy={streaming} />
 
       {/* Quick chips */}
       <div className="shrink-0 flex flex-wrap gap-1.5 px-3 py-2 border-b border-slate-700">
