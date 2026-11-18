@@ -7,6 +7,7 @@ import { SlowHint, StopButton, StoppedNotice, TruncatedNotice, SkillsUsed } from
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
+import AiSplit from "../components/AiSplit";
 import AiHistoryStrip from "../components/AiHistoryStrip";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
@@ -528,8 +529,19 @@ export default function ApexRunner({ org, onApiCall }) {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* ── Left: editor + controls ─────────────────────────────────────────── */}
-      <div className={`flex flex-col overflow-hidden transition-all duration-200 ${aiOpen ? "w-1/2" : "flex-1"}`}>
+      {/* ── Left: editor + controls. Right, while open: the AI panel ─────────── */}
+      <AiSplit
+        open={aiOpen}
+        ai={
+          <AiPanel
+            code={code}
+            lastLog={output}
+            onInsert={handleAiInsert}
+            apiVersion={apiVersion}
+            onClose={() => setAiOpen(false)}
+          />
+        }
+      >
 
         {/* Code editor */}
         <div className="flex-1 min-h-0 p-3 pb-0">
@@ -679,20 +691,7 @@ export default function ApexRunner({ org, onApiCall }) {
           heightClass="h-36"
           className="shrink-0"
         />
-      </div>
-
-      {/* ── Right: OpenCode AI panel ──────────────────────────────────────────── */}
-      {aiOpen && (
-        <div className="w-1/2 flex flex-col overflow-hidden border-l border-gray-300 dark:border-gray-700">
-          <AiPanel
-            code={code}
-            lastLog={output}
-            onInsert={handleAiInsert}
-            apiVersion={apiVersion}
-            onClose={() => setAiOpen(false)}
-          />
-        </div>
-      )}
+      </AiSplit>
     </div>
   );
 }

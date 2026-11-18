@@ -14,6 +14,7 @@ import { SlowHint, StopButton, StoppedNotice, TruncatedNotice, SkillsUsed } from
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
+import AiSplit from "../components/AiSplit";
 import AiHistoryStrip from "../components/AiHistoryStrip";
 
 const PAGE_SIZE = 50;
@@ -410,8 +411,18 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
         </button>
       )}
 
-      {/* ── Center: editor + results + debug log ───────────────────────────── */}
-      <div className={`flex flex-col overflow-hidden transition-all duration-200 ${aiOpen ? "flex-1" : "flex-1"}`}>
+      {/* ── Center: editor + results + debug log. Right, while open: the AI panel ── */}
+      <AiSplit
+        open={aiOpen}
+        ai={
+          <AiPanel
+            query={query}
+            results={{ cols, rows }}
+            onInsert={(q) => setQuery(q)}
+            onClose={() => setAiOpen(false)}
+          />
+        }
+      >
 
         {/* SOQL Editor */}
         <div className="shrink-0 flex gap-2 p-3 border-b border-gray-200 dark:border-gray-700">
@@ -535,19 +546,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
           heightClass="h-36"
           className="shrink-0"
         />
-      </div>
-
-      {/* ── Right: OpenCode AI panel ──────────────────────────────────────────── */}
-      {aiOpen && (
-        <div className="w-80 flex flex-col overflow-hidden border-l border-gray-300 dark:border-gray-700 shrink-0">
-          <AiPanel
-            query={query}
-            results={{ cols, rows }}
-            onInsert={(q) => setQuery(q)}
-            onClose={() => setAiOpen(false)}
-          />
-        </div>
-      )}
+      </AiSplit>
     </div>
   );
 }
