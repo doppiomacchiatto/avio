@@ -124,7 +124,7 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
       });
       markSaved(surface);
       say("ok", `Saved ${plural(chat.messages.length, "message")} to ${finalPath}` +
-        (isMd ? ". This readable copy cannot be loaded back: save as .json to continue it later." : ""));
+        (isMd ? ". This readable copy cannot be loaded back: save as .json to continue it later." : ". Open it again with Load file."));
     } catch (e) {
       debugLog(`Save conversation failed: ${e?.message || e}`, "error");
       say("err", `Could not save the conversation: ${e?.message || e}`);
@@ -161,10 +161,17 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
         {offer && (
           <>
             <span>
-              Restore your last {SURFACES[surface].label} conversation (saved {when(saved.saved_at)},{" "}
-              {plural(saved.count, "message")}; kept until {when(saved.expires_at)})?
+              Avio kept your last {SURFACES[surface].label} conversation (saved {when(saved.saved_at)},{" "}
+              {plural(saved.count, "message")}; kept until {when(saved.expires_at)}). Restore it?
             </span>
-            <button disabled={busy} onClick={restore} className={`${small} ${t.btn}`}>Restore</button>
+            <button
+              disabled={busy}
+              onClick={restore}
+              className={`${small} ${t.btn}`}
+              title="Bring back the copy Avio kept when you closed the app or switched org. It is not a file: Load file is only for conversations you saved to a file yourself."
+            >
+              Restore
+            </button>
             <button onClick={() => setDismissed(true)} className={`${small} ${t.quiet}`}>Dismiss</button>
             <button onClick={discardSaved} className={`${small} ${t.quiet}`} title="Delete the saved copy now">Delete</button>
           </>
@@ -190,17 +197,17 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
           onClick={saveToFile}
           disabled={!hasMessages}
           className={`${small} ${t.btn}`}
-          title={`Save this conversation to a file: .json to load again later, .md only to read. Avio also offers to keep it for ${RETENTION_DAYS} days when you close the app.`}
+          title={`Save this conversation to a file you choose: .json to load again later, .md only to read. The file never expires. Separately, Avio offers to keep a copy for ${RETENTION_DAYS} days when you close the app or switch org: that copy comes back with Restore, not with Load file.`}
         >
-          💾 Save
+          💾 Save to file
         </button>
         <button
           onClick={() => fileRef.current?.click()}
           disabled={busy}
           className={`${small} ${t.btn}`}
-          title="Load a conversation saved from Avio (.json). It becomes context for the model, so it uses tokens."
+          title="Open a conversation file (.json) that you saved with Save to file. It becomes context for the model, so it uses tokens. A copy Avio kept at close or on an org switch is not a file: it is offered here with Restore."
         >
-          📂 Load
+          📂 Load file
         </button>
         <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={onFilePicked} />
       </div>

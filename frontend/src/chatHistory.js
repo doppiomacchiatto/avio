@@ -87,7 +87,7 @@ export function toMarkdown(chat) {
 // A Markdown export is for reading: it cannot be loaded back, so say so instead of "not valid JSON".
 export function checkFileName(name) {
   if (/\.(md|markdown|txt)$/i.test(String(name || ""))) {
-    return "That is a readable text export, which Avio cannot load back. To continue a conversation later, save it as .json (Save, then choose the Avio conversation type) and load that file.";
+    return "That is a readable text export, which Avio cannot load back. To continue a conversation later, save it as .json (Save to file, then choose the Avio conversation type) and open it with Load file.";
   }
   return null;
 }

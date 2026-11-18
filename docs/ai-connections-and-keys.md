@@ -123,9 +123,20 @@ The AI panel in the Apex Runner and the SOQL Runner, and the AI Chat tab, each k
 
 A saved conversation is **deleted automatically 3 days after you saved it**, whether or not you restored it. **⚙ Settings → AI Model → Delete all saved conversations** removes them all now. The offer shows the date the saved copy will be removed.
 
-**To keep a conversation longer, or share it:** each AI panel has **💾 Save** and **📂 Load**. Save writes a file you choose: a `.json` file that Avio can load again, or a `.md` file that is just readable text (for reading or sharing: **Avio cannot load a `.md` back**, so choose `.json` if you want to continue the conversation later). Files you save yourself never expire and Avio never deletes them. **Load** opens a `.json` file saved from Avio; if the panel already has a conversation you choose **Replace** or **Append**. After loading, Avio shows roughly how many tokens will be sent with your next message, because a loaded conversation becomes context for the model and uses tokens.
+**To keep a conversation longer, or share it:** each AI panel has **💾 Save to file** and **📂 Load file**. Save to file writes a file you choose: a `.json` file that Avio can load again, or a `.md` file that is just readable text (for reading or sharing: **Avio cannot load a `.md` back**, so choose `.json` if you want to continue the conversation later). Files you save yourself never expire and Avio never deletes them. **Load file** opens a `.json` file saved from Avio; if the panel already has a conversation you choose **Replace** or **Append**. After loading, Avio shows roughly how many tokens will be sent with your next message, because a loaded conversation becomes context for the model and uses tokens.
 
-**Switch Org** starts a new AI Chat, because that chat's object list belongs to the org you are leaving. If it has unsaved messages Avio asks whether to keep them for 3 days or discard them. The Apex Runner and SOQL Runner conversations are not affected.
+**Restore and Load file are different things:**
+
+| | Restore | Load file |
+|---|---|---|
+| What it brings back | The copy Avio kept when you chose **Save & Quit** or **Save & switch** | A `.json` file you wrote yourself with **Save to file** |
+| Where it is | Inside Avio; you do not pick a file | Wherever you saved it; Windows opens the folder you used last |
+| How long it lasts | 3 days | Until you delete the file |
+| Where you find it | The line at the top of the panel ("Avio kept your last … conversation … Restore it?") | The **📂 Load file** button |
+
+A conversation Avio kept for you never shows up in the Load file window.
+
+**Switch Org** starts a new AI Chat, because that chat's object list belongs to the org you are leaving. If it has unsaved messages Avio asks whether to keep them for 3 days or discard them; if you keep them, the **Restore** line appears at the top of the new, empty chat. A reply that is still arriving when you switch is stopped (what had arrived is kept with the saved copy). The Apex Runner and SOQL Runner conversations are not affected.
 
 **Privacy.** Saved conversations and files are **plain text**, protected only by your operating system account. They can contain your Salesforce code, query text and replies that quote your data. They never contain an API key or connection details (keys never reach the page), but anything the AI repeated from your org can be in them. Treat a saved file like the code or data it came from, and check it before sharing. Only the conversation is saved: not the code in the editor, the query or its results.
 
@@ -257,9 +268,10 @@ How overrides combine: a panel with a specific connection chosen **ignores** ove
 | **"Couldn't fetch models — showing built-in list"** | The provider rejected the key or URL, or it is unreachable. The list shown is a built-in fallback for that provider; fix the key or URL and refresh. |
 | **"No reply from … so Avio stopped waiting."** | The provider didn't send anything for 5 minutes (15 for a local model). It may be overloaded or down, or the model was thinking a very long time. Send again; if it repeats, pick another model, or one that more than one host serves. To wait longer, set `chat_timeout_seconds` in `config.json`. |
 | **A reply seems stuck** | Press **■ Stop**, then send again. Quitting Avio also always works. |
-| **"That saved conversation no longer exists"** | Saved conversations are deleted 3 days after saving (or you deleted it). Use 💾 Save in a panel to keep one as a file. |
-| **"That file is not an Avio conversation"** (Load) | Load needs a `.json` file saved with 💾 Save in Avio. A `.md` export is for reading only. |
-| **"Could not save …"** in the close dialog | Avio stays open so nothing is lost. Free some disk space or use 💾 Save to write the conversation somewhere else, then close again. |
+| **"That saved conversation no longer exists"** | Saved conversations are deleted 3 days after saving (or you deleted it). Use 💾 Save to file in a panel to keep one as a file. |
+| **"That file is not an Avio conversation"** (Load file) | Load file needs a `.json` file saved with 💾 Save to file in Avio. A `.md` export is for reading only. |
+| **A conversation I kept with Save & Quit or Save & switch is not in the Load file window** | It is not a file. Open the panel with an empty conversation and use **Restore** in the line at the top. Load file only opens files you saved yourself with 💾 Save to file. |
+| **"Could not save …"** in the close dialog | Avio stays open so nothing is lost. Free some disk space or use 💾 Save to file to write the conversation somewhere else, then close again. |
 | **"The selected connection no longer exists"** | It was deleted. Choose another in the panel dropdown, or add it again. |
 | **Every request fails with "Unauthorized" (in the 🐞 Debug log)** | The page doesn't have the current per-launch token. Quit and relaunch Avio; if it keeps happening, please report it. |
 | **macOS asks to allow Keychain access** | Choose "Always Allow". Until Avio is code-signed this can reappear after an update. |

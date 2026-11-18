@@ -10,7 +10,8 @@ import OrgHealth from "./pages/OrgHealth";
 import RestExplorer from "./pages/RestExplorer";
 import DebugLogModal from "./components/DebugLogModal";
 import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
-import { api, waitForBackend, isTauri, openExternal, isLocalUrl } from "./api/client";
+import { api, waitForBackend, isTauri, openExternal, isLocalUrl, stopStream } from "./api/client";
+import { getSession, setSession } from "./sessionStore";
 import { loadConnections } from "./connections";
 import { debugLog, useDebugLog } from "./debugLog";
 import { RETENTION_DAYS, unsavedChats, hasUnsavedChats, saveUnsavedToApp, resetSurface } from "./chatHistory";
@@ -112,7 +113,21 @@ export default function App() {
   const [orgSwitchBusy, setOrgSwitchBusy] = useState(false);
   const [orgSwitchError, setOrgSwitchError] = useState("");
 
+  // A reply still arriving for the org being left is stopped: it was asked about the old org and
+  // would otherwise land in the new, empty chat. What has arrived is kept, as with the Stop button.
+  function stopChatReply() {
+    if (!stopStream("chat")) return;
+    setSession("chat.messages", (m = []) => {
+      const last = m[m.length - 1];
+      if (!last || last.role !== "assistant" || last.system) return m;
+      return last.content ? [...m.slice(0, -1), { ...last, stopped: true }] : m.slice(0, -1);
+    });
+    setSession("chat.streaming", false);
+    setSession("chat.truncated", false);
+  }
+
   async function finishOrgSwitch(save) {
+    stopChatReply();
     if (save) {
       setOrgSwitchBusy(true);
       setOrgSwitchError("");
@@ -499,7 +514,12 @@ export default function App() {
   function handleOrgSelect(org) {
     if (activeOrg && activeOrg.alias !== org.alias) {
       const unsaved = unsavedChats().find((u) => u.surface === "chat");
-      if (unsaved) { setOrgSwitchError(""); setOrgSwitch({ org, count: unsaved.count }); return; }
+      if (unsaved) {
+        setOrgSwitchError("");
+        setOrgSwitch({ org, count: unsaved.count, replying: !!getSession("chat.streaming", false) });
+        return;
+      }
+      stopChatReply();
       resetSurface("chat");
     }
     applyOrg(org);
@@ -598,7 +618,8 @@ export default function App() {
                 </ul>
                 <p className="mt-2 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
                   <strong>Save</strong> keeps them on this computer for {RETENTION_DAYS} days as plain text (they can contain
-                  your Salesforce code and data) and offers to restore them next time. <strong>Discard</strong> loses them.
+                  your Salesforce code and data). Next time, <strong>Restore</strong> at the top of each AI panel brings them
+                  back (not Load file, which opens files you saved yourself). <strong>Discard</strong> loses them.
                 </p>
               </div>
             )}
@@ -653,7 +674,9 @@ export default function App() {
               <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                 Your AI Chat ({orgSwitch.count} {orgSwitch.count === 1 ? "message" : "messages"}) knows about the org you are leaving, so
                 switching to <strong>{orgSwitch.org.alias}</strong> starts a new chat. Keep the old one for {RETENTION_DAYS} days
-                (plain text on this computer), or discard it?
+                (plain text on this computer), or discard it? A kept chat comes back with <strong>Restore</strong> at the
+                top of AI Chat (not with Load file, which opens files you saved yourself).
+                {orgSwitch.replying && " The reply that is still arriving will be stopped."}
               </p>
             </div>
             {orgSwitchError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{orgSwitchError}</p>}
