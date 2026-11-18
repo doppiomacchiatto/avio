@@ -5,13 +5,19 @@ import OrgLoginPanel from "./OrgLoginPanel";
 import { debugLog, useDebugLog } from "../debugLog";
 import DebugLogModal from "./DebugLogModal";
 
+// The org list from the last `sf org list`, kept until Avio closes. The CLI takes several seconds,
+// so Switch Org shows this list at once. "Refresh org list" and a completed login run the CLI again.
+let cachedOrgs = null;
+
 export default function OrgPickerModal({ onSelect }) {
-  const [orgs,          setOrgs]          = useState([]);
-  const [loading,       setLoading]       = useState(true);
+  const [orgs,          setOrgs]          = useState(cachedOrgs || []);
+  const [loading,       setLoading]       = useState(!cachedOrgs);
   const [error,         setError]         = useState("");
-  const [chosen,        setChosen]        = useState("");
-  const [startupStatus, setStartupStatus] = useState("starting"); // "starting" | "ready" | null
+  const [chosen,        setChosen]        = useState(() => cachedOrgs?.find((o) => o.isDefault)?.alias || "");
+  const [startupStatus, setStartupStatus] = useState(cachedOrgs ? null : "starting"); // "starting" | "ready" | null
   const [slowStart,     setSlowStart]     = useState(false);
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [refreshError,  setRefreshError]  = useState("");
   const [debugOpen,     setDebugOpen]     = useState(false);
   const [addingOrg,     setAddingOrg]     = useState(false);   // login panel shown even though orgs exist
   const debugEntries = useDebugLog();
@@ -21,6 +27,7 @@ export default function OrgPickerModal({ onSelect }) {
   }
 
   useEffect(() => {
+    if (cachedOrgs) return;          // already loaded this session: no backend wait, no CLI calls
     let cancelled = false;
     async function init() {
       // 1. Wait for the backend. The bundled backend takes ~6s to start when warm
@@ -73,22 +80,27 @@ export default function OrgPickerModal({ onSelect }) {
   }, []);
 
   // Fetch the CLI's orgs. `preferAlias` (a just-completed login) is selected when present,
-  // otherwise the CLI's default org.
-  async function loadOrgs(preferAlias) {
-    addLog("Fetching orgs…", "start");
+  // otherwise the CLI's default org. `refresh` is the user asking for the list again while one is
+  // shown: a failure then leaves that list in place.
+  async function loadOrgs(preferAlias, { refresh = false } = {}) {
+    addLog(refresh ? "Refreshing orgs…" : "Fetching orgs…", "start");
+    if (refresh) { setRefreshing(true); setRefreshError(""); }
     try {
       const d = await api("/api/orgs");
       const list = d.orgs || [];
       addLog(`✅ Found ${list.length} org(s)`, "done");
+      cachedOrgs = list.length ? list : null;
       setOrgs(list);
       setError("");
       const pick = list.find((o) => o.alias === preferAlias) || list.find((o) => o.isDefault);
-      if (pick) setChosen(pick.alias);
+      setChosen(pick ? pick.alias : "");
     } catch (e) {
       addLog(`❌ ${String(e)}`, "error");
-      setError(String(e));
+      if (refresh) setRefreshError(String(e?.message || e).split("\n")[0]);
+      else setError(String(e));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -187,13 +199,25 @@ export default function OrgPickerModal({ onSelect }) {
                 </div>
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => setAddingOrg(true)}
-              className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 text-left px-1 pt-1"
-            >
-              ＋ Log in to another org
-            </button>
+            <div className="flex items-center justify-between px-1 pt-1">
+              <button
+                type="button"
+                onClick={() => setAddingOrg(true)}
+                className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 text-left"
+              >
+                ＋ Log in to another org
+              </button>
+              <button
+                type="button"
+                disabled={refreshing}
+                onClick={() => loadOrgs(chosen, { refresh: true })}
+                title="Ask the Salesforce CLI for the org list again. Use it after logging in to, or out of, an org outside Avio."
+                className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 disabled:opacity-50"
+              >
+                {refreshing ? "Refreshing…" : "↻ Refresh org list"}
+              </button>
+            </div>
+            {refreshError && <p role="alert" className="text-xs text-red-600 dark:text-red-400 px-1">Could not refresh: {refreshError}</p>}
           </div>
         )}
 

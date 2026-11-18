@@ -242,6 +242,8 @@ sf org login web --instance-url <login URL> --alias <alias>
 
 and the page continues by itself once you finish in the browser (there is a Cancel button, and a 5-minute limit). The same panel opens from **＋ Log in to another org** under the org list, so you can add an org without a terminal. Avio never sees your password; the CLI keeps the session as usual.
 
+Avio asks the CLI for the org list once per launch and keeps it until you close the app, so **Switch Org** opens at once. If you log in to, or out of, an org outside Avio while it is running, use **↻ Refresh org list** under the list.
+
 | Choice | Login URL | Alias |
 |---|---|---|
 | Production | `https://login.salesforce.com` | `avio-prod` |
