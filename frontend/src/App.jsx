@@ -587,7 +587,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       {/* Org picker modal */}
-      {showOrgPicker && <OrgPickerModal onSelect={handleOrgSelect} />}
+      {showOrgPicker && <OrgPickerModal onSelect={handleOrgSelect} onCancel={activeOrg ? () => setShowOrgPicker(false) : undefined} />}
 
       {welcomeOpen && <WelcomeModal onClose={() => setWelcomeOpen(false)} />}
 

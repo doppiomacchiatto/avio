@@ -9,7 +9,9 @@ import DebugLogModal from "./DebugLogModal";
 // so Switch Org shows this list at once. "Refresh org list" and a completed login run the CLI again.
 let cachedOrgs = null;
 
-export default function OrgPickerModal({ onSelect }) {
+// `onCancel` is passed when an org is already connected (Switch Org): the picker can then be closed
+// without choosing. At startup there is nothing to go back to, so it is not offered.
+export default function OrgPickerModal({ onSelect, onCancel }) {
   const [orgs,          setOrgs]          = useState(cachedOrgs || []);
   const [loading,       setLoading]       = useState(!cachedOrgs);
   const [error,         setError]         = useState("");
@@ -111,6 +113,9 @@ export default function OrgPickerModal({ onSelect }) {
     if (org) onSelect(org);
   }
 
+  // Not while the login panel is open: it has its own Back link, and a login may be running.
+  const canCancel = !!onCancel && !addingOrg;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-[420px] overflow-hidden flex flex-col">
@@ -119,8 +124,19 @@ export default function OrgPickerModal({ onSelect }) {
           <img src="/icon-32.png" alt="Avio" className="w-7 h-7 object-contain shrink-0" />
           <div>
             <h1 className="text-base font-bold text-white leading-tight">Avio</h1>
-            <p className="text-xs text-blue-200">Select a Salesforce org to get started</p>
+            <p className="text-xs text-blue-200">{onCancel ? "Choose the org to switch to" : "Select a Salesforce org to get started"}</p>
           </div>
+          {canCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              title="Close without switching org"
+              aria-label="Close without switching org"
+              className="ml-auto text-blue-200 hover:text-white text-lg leading-none px-1"
+            >
+              ✕
+            </button>
+          )}
         </div>
         <div className="p-6 flex flex-col gap-5">
 
@@ -223,13 +239,24 @@ export default function OrgPickerModal({ onSelect }) {
 
         {/* Confirm (the login panel has its own button) */}
         {!(addingOrg || (!loading && !error && orgs.length === 0)) && (
-          <button
-            disabled={!chosen || loading}
-            onClick={confirm}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-semibold text-sm transition-colors"
-          >
-            Connect to org
-          </button>
+          <div className="flex gap-3">
+            {canCancel && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="flex-1 py-3 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              disabled={!chosen || loading}
+              onClick={confirm}
+              className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-semibold text-sm transition-colors"
+            >
+              Connect to org
+            </button>
+          </div>
         )}
 
         {/* Debug link — always accessible even during startup */}
