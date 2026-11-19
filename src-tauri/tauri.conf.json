@@ -1,6 +1,6 @@
 {
   "productName": "Avio",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "com.avio.app",
   "build": {
     "beforeDevCommand": "npm run dev:frontend",

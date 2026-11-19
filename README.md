@@ -1,4 +1,4 @@
-# Avio v1.0.3 Beta — Salesforce Metadata Explorer
+# Avio v1.0.4 Beta — Salesforce Metadata Explorer
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Avio-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/doppiomacchiato)
 
@@ -18,7 +18,7 @@ Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (
 **Not code-signed yet.** Windows SmartScreen may show "Windows protected your PC": click **More info → Run anyway**. Each release lists the SHA-256 of its installers; to check yours:
 
 ```powershell
-Get-FileHash .\Avio_1.0.3_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Avio_1.0.4_x64-setup.exe -Algorithm SHA256
 ```
 
 Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically on first run.
