@@ -63,6 +63,7 @@ Get-FileHash .\Avio_1.0.3_x64-setup.exe -Algorithm SHA256
 - Closes that skip Avio's close dialog (Windows shutdown or sign-out, ending the process, a crash) cannot offer to save conversations
 - Restore offers only the newest kept conversation per panel; the Apex and SOQL Runner offers appear when that AI panel is open
 - Stop was checked against a test provider; whether every vendor stops billing at the moment the connection closes has not been confirmed
+- **Local models (Ollama, LM Studio) are experimental.** Avio sends them a condensed version of its Salesforce skills (about 6,000 characters, without the code templates or skills you added), and Ollama's default context window is small, so a long prompt can be cut without warning. Small local models also write noticeably weaker Salesforce code. Use a cloud model for Apex generation; full local support (context checks and a list of recommended models) is planned for a future release.
 - AI answers can be wrong. Review generated Apex before you deploy it.
 
 ## Feedback
