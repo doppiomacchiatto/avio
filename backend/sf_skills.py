@@ -703,11 +703,30 @@ def _condense(text: str, limit: int) -> str:
     return cut.rstrip() + "\n\n[... condensed for a small context window ...]"
 
 
+def _bundled_linked_assets(skill: str, skill_md: str, root: Optional[Path], base_url: str) -> list[str]:
+    """Code blocks for the non-markdown files a built-in skill's SKILL.md links to, read from the
+    local skills root or fetched from the HTTP mirror. Over-cap, missing and outside files are skipped."""
+    blocks: list[str] = []
+    for rel in _linked_paths(skill_md):
+        if _is_markdown(rel):
+            continue
+        if root is not None:
+            content = _read_linked_asset(root / skill, rel)
+        else:
+            content = _load_file_url(base_url, f"{skill}/{rel}")
+            if content and len(content) > _MAX_ASSET_CHARS:
+                content = None
+        if content:
+            blocks.append(_asset_block(rel, content))
+    return blocks
+
+
 def build_skill_context(skills: list[str], cfg: Optional[dict] = None,
                         budget: Optional[int] = None) -> str:
     """
     Assemble skill markdown for the given skill names into a single block
     ready to append to the system prompt. Returns "" if nothing available.
+    In full mode the templates SKILL.md links to (e.g. the Apex assets/*.cls) are included too.
 
     `budget` (characters) switches to condensed mode for small-context models: only each
     skill's SKILL.md is used, shrunk with _condense, sharing the budget between skills.
@@ -738,6 +757,11 @@ def build_skill_context(skills: list[str], cfg: Optional[dict] = None,
                 content = _condense(content, per_skill)
             if content:
                 parts.append(content)
+        if budget is None and parts and files and files[0].endswith("/SKILL.md"):
+            # Templates and samples SKILL.md links to (assets/*.cls, references/*.cls), with the
+            # same rules as added skills: linked files only, inside the skill folder, capped, no
+            # scripts. Linked markdown is already covered by SKILL_FILES.
+            parts += _bundled_linked_assets(skill, parts[0], root, base_url)
         if parts:
             sections.append(f"## {skill}\n\n" + "\n\n---\n\n".join(parts))
 
