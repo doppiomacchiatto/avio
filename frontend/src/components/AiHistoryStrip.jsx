@@ -122,9 +122,11 @@ export default function AiHistoryStrip({ surface, busy = false, variant = "dark"
         path: finalPath,
         content: isMd ? toMarkdown(chat) : JSON.stringify(chat, null, 2) + "\n",
       });
-      markSaved(surface);
+      if (!isMd) markSaved(surface);   // a .md copy cannot be loaded back, so the close dialog still offers to keep the chat
       say("ok", `Saved ${plural(chat.messages.length, "message")} to ${finalPath}` +
-        (isMd ? ". This readable copy cannot be loaded back: save as .json to continue it later." : ". Open it again with Load file."));
+        (isMd
+          ? ". This readable copy cannot be loaded back, so the conversation still counts as unsaved: save as .json to continue it later."
+          : ". Open it again with Load file."));
     } catch (e) {
       debugLog(`Save conversation failed: ${e?.message || e}`, "error");
       say("err", `Could not save the conversation: ${e?.message || e}`);
