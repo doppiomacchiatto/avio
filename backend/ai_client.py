@@ -548,6 +548,16 @@ def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Option
     p = _error_parts(exc)
     if p["status"] == 403 and r and _is_openrouter(r.base_url):
         return _openrouter_403_message(p, r, model)
+    if is_context_length_error(exc):
+        label = (model or (r.model if r else "") or "").strip()
+        parts = [("The context of " + (label or "this model") + " is too small for this prompt plus "
+                  "Avio's Salesforce skills."),
+                 "Pick a model with a larger context, or shorten the conversation (start a new chat)."]
+        detail = p["raw"] or p["message"]
+        if detail:
+            who = f" ({p['provider']})" if p["provider"] else ""
+            parts.append(f'The provider said{who}: "{_clip(detail)}"')
+        return "\n\n".join(parts)
     if p["status"] is not None and 500 <= p["status"] <= 599:
         return _server_error_message(exc, p, r, model)
     if p["status"] != 429:
@@ -645,7 +655,9 @@ def fetch_models(api_key: Optional[str] = None, base_url: Optional[str] = None) 
                 raise RuntimeError("Your OpenRouter workspace allows no models. Check its guardrails "
                                    "(allowed models and providers) and your account privacy settings.")
         if raw_ids is None:
-            raw_ids = [m.id for m in openai.OpenAI(**kwargs).models.list().data]
+            listed = openai.OpenAI(**kwargs).models.list().data
+            _remember_contexts(url, [dict(m.model_extra or {}, id=m.id) for m in listed])
+            raw_ids = [m.id for m in listed]
     ids = ModelIds()
     ids.scope = scope
     for rid in raw_ids:
@@ -705,6 +717,7 @@ def _fetch_openrouter_workspace_models(url: str, api_key: str) -> list[str]:
                                  headers={"Authorization": f"Bearer {api_key}", "User-Agent": "Avio"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    _remember_contexts(url, data.get("data", []))
     return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
 
 
@@ -714,8 +727,107 @@ def _fetch_public_model_ids(url: str) -> list[str]:
     req = urllib.request.Request(url.rstrip("/") + "/models", headers={"User-Agent": "Avio"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    _remember_contexts(url, data.get("data", []))
     return [m["id"] for m in data.get("data", [])
             if isinstance(m, dict) and m.get("id") and not _is_free_model(m)]
+
+
+# ---------------------------------------------------------------------------
+# Context windows: how many tokens a model accepts, when its provider's model list says so
+# ---------------------------------------------------------------------------
+# Filled from every model list Avio reads (OpenRouter /models and /models/user report
+# "context_length", Groq "context_window", OpenCode's catalog "limit"), keyed by (base URL, model id).
+_CONTEXT_LENGTHS: dict = {}
+# Catalogs fetched at chat time when a model is not in the table yet: base URL -> retry-after time.
+_CONTEXT_FETCHED: dict = {}
+_CONTEXT_TTL_OK = 3600.0
+_CONTEXT_TTL_FAIL = 300.0
+
+
+def _context_of(entry) -> Optional[int]:
+    """The context window (tokens) in one model-list entry, or None. OpenCode's catalog also gives
+    an input limit; the usable window is then at most that plus the reply limit."""
+    if not isinstance(entry, dict):
+        return None
+    n = _as_int(entry.get("context_length")) or _as_int(entry.get("context_window"))
+    lim = entry.get("limit") if isinstance(entry.get("limit"), dict) else {}
+    if not n:
+        n = _as_int(lim.get("context"))
+        inp, out = _as_int(lim.get("input")), _as_int(lim.get("output"))
+        if n and inp and out and inp + out < n:
+            n = inp + out
+    return n if n and n > 0 else None
+
+
+def _remember_contexts(url: str, entries) -> None:
+    base = (url or "").strip().rstrip("/")
+    for e in entries or []:
+        n = _context_of(e)
+        if n and isinstance(e.get("id"), str):
+            _CONTEXT_LENGTHS[(base, e["id"])] = n
+            _CONTEXT_LENGTHS[(base, e["id"].removeprefix("models/"))] = n
+
+
+def model_context_length(r: "Resolved", model: Optional[str] = None) -> Optional[int]:
+    """The model's context window in tokens, or None when unknown. Uses the model lists already
+    read (Settings → refresh). For OpenRouter and the OpenCode gateway, whose catalogs are public,
+    a missing model triggers one catalog read without credentials (cached for an hour)."""
+    base = (r.base_url or "").strip().rstrip("/")
+    model = (model or r.model or "").strip()
+    if not model:
+        return None
+    hit = _CONTEXT_LENGTHS.get((base, model))
+    if hit or r.local:
+        return hit
+    if not (_is_openrouter(base) or base == OPENCODE_GATEWAY_URL.rstrip("/")):
+        return None
+    now = time.monotonic()
+    if now < _CONTEXT_FETCHED.get(base, 0.0):
+        return None
+    ok = False
+    try:
+        import urllib.request
+        req = urllib.request.Request(base + "/models", headers={"User-Agent": "Avio"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            _remember_contexts(base, json.loads(resp.read().decode("utf-8")).get("data", []))
+        ok = True
+    except Exception as e:
+        log.debug("context lengths: could not read %s/models: %s", base, type(e).__name__)
+    _CONTEXT_FETCHED[base] = now + (_CONTEXT_TTL_OK if ok else _CONTEXT_TTL_FAIL)
+    return _CONTEXT_LENGTHS.get((base, model))
+
+
+def estimate_tokens(system: Optional[str], messages: list) -> int:
+    """Rough prompt size in tokens (characters / 4, plus a little per message)."""
+    chars = len(system or "")
+    for m in messages or []:
+        c = m.get("content", "") if isinstance(m, dict) else m
+        chars += len(c if isinstance(c, str) else json.dumps(c, default=str)) + 16
+    return chars // 4
+
+
+def load_max_tokens(url: str) -> int:
+    """The reply limit Avio asks for on this provider (see _load_max_tokens)."""
+    return _load_max_tokens(url)
+
+
+_CONTEXT_ERROR_RE = re.compile(
+    r"context_length_exceeded|maximum context length|context length|context window|"
+    r"prompt is too long|request too large|too many tokens", re.IGNORECASE)
+
+
+def is_context_length_error(exc: BaseException) -> bool:
+    """True when the provider refused the request because the prompt (plus the reply limit) does not
+    fit the model's context: a 400/413, or an in-stream error, whose text says so."""
+    if _is_timeout(exc):
+        return False
+    p = _error_parts(exc)
+    if p["status"] not in (400, 413, None) and not isinstance(exc, ProviderStreamError):
+        return False
+    text = f"{p['message']} {p['raw']} {p['code'] or ''}"
+    if not p["message"] and not p["raw"]:
+        text += " " + str(exc)
+    return bool(_CONTEXT_ERROR_RE.search(text))
 
 
 def _is_free_model(entry: dict) -> bool:

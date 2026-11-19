@@ -787,7 +787,7 @@ def augment_system(system: Optional[str], messages: list[dict],
 
 def augment_with_skills(system: Optional[str], messages: list[dict],
                         force_skills: Optional[list[str]] = None,
-                        local: bool = False) -> tuple[str, list[str]]:
+                        local: bool = False, condensed: bool = False) -> tuple[str, list[str]]:
     """
     Detect relevant skills from message history and append their context
     to the system prompt. Returns (system string, names of the skills actually injected),
@@ -795,6 +795,8 @@ def augment_with_skills(system: Optional[str], messages: list[dict],
     `force_skills` are included regardless of keyword detection.
     `local=True` (Ollama and other local servers) switches to a condensed summary that
     fits a small context window; see LOCAL_SKILL_BUDGET / "skills_local_budget".
+    `condensed=True` forces that summary for any provider (used when a cloud model's context is
+    too small for the full text); it uses the local budget, or LOCAL_SKILL_BUDGET if that is 0 or -1.
     Respects skills_enabled and skills_source config from the Avio config.json.
     """
     cfg = _load_skills_config()
@@ -811,6 +813,12 @@ def augment_with_skills(system: Optional[str], messages: list[dict],
         budget = None if b < 0 else b          # -1 = send everything, like a cloud model
         if budget == 0:
             return system or "", []            # skills switched off for local models
+    if condensed and not budget:
+        try:
+            b = int(cfg.get("local_budget", LOCAL_SKILL_BUDGET))
+        except (TypeError, ValueError):
+            b = LOCAL_SKILL_BUDGET
+        budget = b if b > 0 else LOCAL_SKILL_BUDGET
 
     skills = detect_skills(messages, force_skills)
     extra = build_skill_context(skills, cfg, budget=budget) if skills else ""
