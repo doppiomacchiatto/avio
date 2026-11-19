@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +33,8 @@ from urllib.parse import urlparse
 import openai
 from platform_env import avio_data_dir
 
+log = logging.getLogger(__name__)
+
 DEFAULT_MODEL    = "gpt-4o"
 # Reasoning models spend part of the limit on hidden thinking (a 4096 limit cut a Claude
 # Apex answer off mid-code), so cloud providers get a generous limit. Local servers
@@ -39,6 +43,15 @@ CLOUD_MAX_TOKENS = 16384
 LOCAL_MAX_TOKENS = 4096
 # If a model rejects the limit as too large, retry with the next smaller value.
 _MAX_TOKEN_LADDER = (16384, 8192, 4096, 2048)
+
+# How long a chat request may stay silent (no bytes at all) before Avio gives up. The SDK default
+# is 10 minutes, doubled by its retries. Reasoning models can think for minutes before the first
+# word, so cloud gets 5; a local model may also have to load, so it gets 15.
+CLOUD_CHAT_TIMEOUT = 300
+LOCAL_CHAT_TIMEOUT = 900
+# The SDK sends a chat request again after a timeout or a 5xx. One retry (its default is two) so a
+# host that never answers costs one extra wait, not two.
+CHAT_MAX_RETRIES = 1
 
 CONFIG_PATH      = avio_data_dir() / "config.json"
 API_KEY_PATH     = avio_data_dir() / "api_key"
@@ -294,6 +307,26 @@ def _load_max_tokens(url: str) -> int:
     return LOCAL_MAX_TOKENS if _is_local(url) else CLOUD_MAX_TOKENS
 
 
+def _load_chat_timeout(url: str) -> int:
+    """Seconds of silence after which a chat request is given up: config.json "chat_timeout_seconds"
+    (10 to 3600), else a default for cloud or local providers."""
+    try:
+        n = int(_load_avio_config().get("chat_timeout_seconds"))
+        if 10 <= n <= 3600:
+            return n
+    except (TypeError, ValueError):
+        pass
+    return LOCAL_CHAT_TIMEOUT if _is_local(url) else CLOUD_CHAT_TIMEOUT
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """True for the SDK's own timeout and for the raw HTTP-library timeouts that surface while a reply
+    is streaming (matched by class name: the HTTP library differs between environments)."""
+    return isinstance(exc, openai.APITimeoutError) or any(
+        c.__name__ in ("TimeoutException", "ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout")
+        for c in type(exc).__mro__)
+
+
 @dataclass
 class StreamFinish:
     """Yielded last by AIClient.stream(): why the model stopped ("stop", "length", ...)."""
@@ -423,13 +456,100 @@ def _openrouter_403_message(p: dict, r: "Resolved", model: Optional[str]) -> str
     return "\n\n".join(parts)
 
 
+# What a 5xx status means, in the words used in the panel. 520-527 are Cloudflare's codes for "the
+# server behind me did not answer properly"; most AI providers sit behind Cloudflare.
+_SERVER_ERRORS = {
+    500: "an internal error on its side",
+    502: "a bad gateway (the server behind it gave no valid answer)",
+    503: "service unavailable",
+    504: "a gateway timeout (the server behind it took too long)",
+    520: "an unknown error from the server behind it",
+    521: "the server behind it is down",
+    522: "a connection timeout (the server behind it could not be reached in time)",
+    523: "the server behind it is unreachable",
+    524: "a timeout (the server behind it took too long to answer)",
+    529: "the provider is overloaded",
+}
+_OR_SERVER_ERRORS = {
+    502: "the model's host is down or returned an invalid response",
+    503: "no host is available for this model right now",
+}
+
+
+def _server_error_detail(p: dict, body: object = None) -> str:
+    """The provider's own words for a server error, or "" when there is nothing worth quoting: an
+    HTML error page is reduced to its title, and the SDK's bare "Error code: 522" is dropped.
+    `body` is the SDK error's body, which is plain text (often that HTML page) when it is not JSON."""
+    detail = str(p["raw"] or (body if isinstance(body, str) and body.strip() else "") or p["message"] or "")
+    if re.search(r"<\s*(!doctype|html|head|body)\b", detail, re.IGNORECASE):
+        title = re.search(r"<title[^>]*>(.*?)</title>", detail, re.IGNORECASE | re.DOTALL)
+        detail = re.sub(r"<[^>]+>", " ", title.group(1)) if title else ""
+    detail = _clip(detail)
+    return "" if re.fullmatch(r"(error code:?\s*)?\d{3}\.?", detail, re.IGNORECASE) else detail
+
+
+def _server_error_message(exc: Exception, p: dict, r: Optional["Resolved"], model: Optional[str]) -> str:
+    """A 5xx is the provider's failure, not a wrong key or setting: say so, say whether Avio already
+    retried, and say what to do. Without this the panel showed the raw error, sometimes a whole
+    HTML error page."""
+    status = p["status"]
+    host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
+    label = (model or (r.model if r else "") or "").strip()
+    openrouter = bool(r) and _is_openrouter(r.base_url)
+    meaning = (_OR_SERVER_ERRORS.get(status) if openrouter else None) or _SERVER_ERRORS.get(status, "a server error")
+    # An HTTP status error is raised before any text arrives, after the SDK's own retry. An error
+    # reported inside the stream has no HTTP status of its own and is not retried.
+    before_reply = getattr(exc, "status_code", None) is not None
+    if before_reply:
+        first = f"{host} could not answer" + (f" for {label}" if label else "") + f": error {status}, {meaning}."
+    else:
+        first = f"The reply from {host}" + (f" for {label}" if label else "") + f" stopped with error {status}: {meaning}."
+    cause = "This is a problem on the provider's side, not your API key or Avio's settings."
+    if before_reply and CHAT_MAX_RETRIES:
+        cause += " Avio already tried again " + ("once" if CHAT_MAX_RETRIES == 1 else f"{CHAT_MAX_RETRIES} times") + "."
+    parts = [first, cause]
+    if r and r.local:
+        parts.append("Check that the local model server is still running and the model is loaded, then send again.")
+    elif openrouter:
+        wait = _retry_seconds(p["headers"])
+        parts.append(("Wait " + _human_wait(wait) + " and send again." if wait else "Send the message again in a moment.") +
+                     " If it keeps happening, pick another model, or allow a second provider for this model in your "
+                     "OpenRouter guardrail: a model with one allowed host in your region has no fallback.")
+    else:
+        parts.append("Send the message again in a moment. If it keeps happening, check the provider's status page "
+                     "or use another connection.")
+    detail = _server_error_detail(p, getattr(exc, "body", None))
+    if detail:
+        who = f" ({p['provider']})" if p["provider"] else ""
+        parts.append(f'The provider said{who}: "{detail}"')
+    return "\n\n".join(parts)
+
+
 def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Optional[str] = None) -> str:
-    """The text shown in the AI panel for a failed request. Rate limits (429) get a plain
-    explanation of what happened and what to do; every other error keeps its original text,
-    except an error reported mid-stream, which now surfaces instead of passing as a finish."""
+    """The text shown in the AI panel for a failed request. Rate limits (429), server errors (5xx),
+    OpenRouter refusals (403) and timeouts get a plain explanation of what happened and what to do;
+    every other error keeps its original text, except an error reported mid-stream, which now
+    surfaces instead of passing as a finish."""
+    if _is_timeout(exc):
+        host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
+        secs = _load_chat_timeout(r.base_url if r else "")
+        waited = f"{secs // 60} minutes" if secs % 60 == 0 and secs >= 120 else f"{secs} seconds"
+        label = (model or (r.model if r else "") or "").strip()
+        parts = [f"No reply from {host}" + (f" for {label}" if label else "") + f" in {waited}, so Avio stopped waiting."]
+        if r and r.local:
+            parts.append("A local model may still be loading, or the model server is not running. Check that it is "
+                         "up and that the model is pulled, then send again.")
+        else:
+            parts.append("The provider may be overloaded or down, or the model may be thinking for a very long time "
+                         "(reasoning models can). Send again. If it repeats, pick another model, or one that more than one "
+                         "host serves" + (" in your region" if r and _is_openrouter(r.base_url) else "") + ".")
+        parts.append('To wait longer, set "chat_timeout_seconds" in Avio\'s config.json (seconds, 10 to 3600).')
+        return "\n\n".join(parts)
     p = _error_parts(exc)
     if p["status"] == 403 and r and _is_openrouter(r.base_url):
         return _openrouter_403_message(p, r, model)
+    if p["status"] is not None and 500 <= p["status"] <= 599:
+        return _server_error_message(exc, p, r, model)
     if p["status"] != 429:
         if isinstance(exc, ProviderStreamError):
             code = f" (code {p['status']})" if p["status"] else ""
@@ -614,18 +734,59 @@ class AIClient:
     def __init__(self):
         # One SDK client per (URL, key): different panels can use different connections at once.
         self._clients: dict = {}
+        # Streams that are open right now, by request id, so the Stop button can close one.
+        self._lock = threading.Lock()
+        self._live: dict = {}
+        self._cancelled: set = set()
 
     def invalidate(self) -> None:
         """Drop cached clients (call after connections or keys change)."""
         self._clients.clear()
 
     def _client_for(self, r: Resolved) -> openai.OpenAI:
-        key = (r.base_url, hashlib.sha256(r.api_key.encode("utf-8")).hexdigest()[:16])
+        timeout = _load_chat_timeout(r.base_url)
+        key = (r.base_url, hashlib.sha256(r.api_key.encode("utf-8")).hexdigest()[:16], timeout)
         client = self._clients.get(key)
         if client is None:
-            client = openai.OpenAI(**_client_kwargs(r.api_key, r.base_url))
+            kwargs = _client_kwargs(r.api_key, r.base_url)
+            # `read` is the longest silence allowed.
+            kwargs.update(timeout=openai.Timeout(connect=15.0, read=float(timeout), write=60.0, pool=15.0),
+                          max_retries=CHAT_MAX_RETRIES)
+            client = openai.OpenAI(**kwargs)
             self._clients[key] = client
         return client
+
+    # ------------------------------------------------------------------
+    # Stop: close a reply that is still streaming
+    # ------------------------------------------------------------------
+    def cancel(self, request_id: str) -> bool:
+        """Close the provider connection of a running request, so the provider stops generating (and
+        billing) and the blocked read ends. If the request has not opened its stream yet, it is
+        dropped as soon as it does. Returns True if a stream was open."""
+        with self._lock:
+            if len(self._cancelled) > 200:        # ids of requests that had already finished
+                self._cancelled.clear()
+            self._cancelled.add(request_id)
+            live = self._live.get(request_id)
+        if live is None:
+            return False
+        try:
+            live.close()
+        except Exception as e:                    # closing from another thread can raise; the read still ends
+            log.debug("closing stream %s: %s", request_id, type(e).__name__)
+        return True
+
+    def _is_cancelled(self, request_id: Optional[str]) -> bool:
+        if not request_id:
+            return False
+        with self._lock:
+            return request_id in self._cancelled
+
+    def _release(self, request_id: Optional[str]) -> None:
+        if request_id:
+            with self._lock:
+                self._live.pop(request_id, None)
+                self._cancelled.discard(request_id)
 
     @staticmethod
     def _prepare(messages: list[dict], system: Optional[str]) -> list[dict]:
@@ -694,33 +855,52 @@ class AIClient:
         max_tokens: Optional[int] = None,
         model: Optional[str] = None,
         resolved: Optional[Resolved] = None,
+        request_id: Optional[str] = None,
     ) -> Generator[object, None, None]:
+        """`request_id` lets cancel() stop this reply. A cancelled reply just ends (no StreamFinish)."""
         r = resolved or resolve_legacy()
         finish: Optional[str] = None
-        with self._create(
-            r,
-            model or r.model,
-            self._prepare(messages, system),
-            max_tokens or _load_max_tokens(r.base_url),
-            stream=True,
-        ) as stream:
-            for chunk in stream:
-                # An error reported inside the stream (HTTP 200 already sent): raise it, or the
-                # reply would end as if it had finished normally.
-                err = (getattr(chunk, "model_extra", None) or {}).get("error")
-                if err:
-                    meta = err.get("metadata") if isinstance(err, dict) and isinstance(err.get("metadata"), dict) else {}
-                    raise ProviderStreamError(
-                        err.get("code") if isinstance(err, dict) else None,
-                        str(err.get("message") or "") if isinstance(err, dict) else str(err),
-                        meta.get("provider_name"), str(meta.get("raw") or ""))
-                if not chunk.choices:        # e.g. Azure's leading chunk, or a usage-only chunk
-                    continue
-                choice = chunk.choices[0]
-                if choice.finish_reason == "error":
-                    raise ProviderStreamError()
-                if choice.delta.content:
-                    yield choice.delta.content
-                if choice.finish_reason:
-                    finish = choice.finish_reason
-        yield StreamFinish(finish)
+        try:
+            if self._is_cancelled(request_id):
+                return
+            with self._create(
+                r,
+                model or r.model,
+                self._prepare(messages, system),
+                max_tokens or _load_max_tokens(r.base_url),
+                stream=True,
+            ) as stream:
+                if request_id:
+                    with self._lock:
+                        self._live[request_id] = stream
+                    if self._is_cancelled(request_id):     # Stop arrived while the request was being opened
+                        return
+                try:
+                    for chunk in stream:
+                        # An error reported inside the stream (HTTP 200 already sent): raise it, or the
+                        # reply would end as if it had finished normally.
+                        err = (getattr(chunk, "model_extra", None) or {}).get("error")
+                        if err:
+                            meta = err.get("metadata") if isinstance(err, dict) and isinstance(err.get("metadata"), dict) else {}
+                            raise ProviderStreamError(
+                                err.get("code") if isinstance(err, dict) else None,
+                                str(err.get("message") or "") if isinstance(err, dict) else str(err),
+                                meta.get("provider_name"), str(meta.get("raw") or ""))
+                        if not chunk.choices:        # e.g. Azure's leading chunk, or a usage-only chunk
+                            continue
+                        choice = chunk.choices[0]
+                        if choice.finish_reason == "error":
+                            raise ProviderStreamError()
+                        if choice.delta.content:
+                            yield choice.delta.content
+                        if choice.finish_reason:
+                            finish = choice.finish_reason
+                except Exception:
+                    if self._is_cancelled(request_id):     # the connection was closed on purpose
+                        return
+                    raise
+            if self._is_cancelled(request_id):
+                return
+            yield StreamFinish(finish)
+        finally:
+            self._release(request_id)

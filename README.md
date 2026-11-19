@@ -1,4 +1,4 @@
-# Avio v1.0.2 Beta — Salesforce Metadata Explorer
+# Avio v1.0.3 Beta — Salesforce Metadata Explorer
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Avio-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/doppiomacchiato)
 
@@ -18,7 +18,7 @@ Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (
 **Not code-signed yet.** Windows SmartScreen may show "Windows protected your PC": click **More info → Run anyway**. Each release lists the SHA-256 of its installers; to check yours:
 
 ```powershell
-Get-FileHash .\Avio_1.0.2_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Avio_1.0.3_x64-setup.exe -Algorithm SHA256
 ```
 
 Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically on first run.
@@ -56,6 +56,7 @@ avio/
 │   ├── sf_cli.py             # Salesforce CLI wrappers (delegates to platform_env)
 │   ├── platform_env.py       # OS-specific PATH, tool discovery, Avio data dir
 │   ├── ai_client.py          # Provider-neutral AI client (OpenAI-compatible APIs)
+│   ├── chat_store.py         # Saved AI conversations (kept 3 days, app-data folder)
 │   ├── sf_skills.py          # Salesforce skill context injected into AI prompts
 │   ├── sf_skills/            # Bundled skills (platform-apex-generate, platform-soql-query)
 │   ├── excel_builder.py      # Excel workbook generation (FLS / object access)
@@ -73,6 +74,7 @@ avio/
 │       ├── App.jsx           # Shell UI: tabs, org picker, settings, About
 │       ├── api/client.js     # Backend client, isTauri(), native dialog helpers
 │       ├── apexExport.js     # Pure helpers: Apex → .cls/.trigger + meta.xml
+│       ├── chatHistory.js    # AI conversation save/load format, validation, unsaved tracking
 │       ├── components/       # OrgPickerModal, TabBar, DebugLogModal, Spinner, …
 │       ├── data/             # Static data (Org Health checks)
 │       └── pages/            # FlsExplorer, ProfilesExplorer, SoqlRunner, ApexRunner,
@@ -91,7 +93,8 @@ avio/
 | Validation rules | `…/validation-rules` (list, toggle, restore snapshot) |
 | Query & execute | `/api/soql`, `/api/soql/history`, `/api/apex`, `…/rest` (REST proxy) |
 | Export | `/api/export`, `/api/export/principal` (Excel workbooks, streamed progress) |
-| AI | `/api/ai/chat` (SSE), `/api/models`, `/api/ai/skills*` (skill sources, fetch, remove) |
+| AI | `/api/ai/chat` (SSE), `/api/ai/chat/cancel` (Stop), `/api/models`, `/api/ai/skills*` (skill sources, fetch, remove) |
+| Saved AI conversations | `/api/chats` (list, save), `/api/chats/{id}`, `/api/chats/delete`, `/api/chats/delete-all` |
 
 ---
 
@@ -222,11 +225,11 @@ npx tauri build
 
 | OS | Location |
 |---|---|
-| Windows | `%APPDATA%\Avio\` (`config.json`, `skills\`, `query_history.db`, `vr_snapshots.json`) |
+| Windows | `%APPDATA%\Avio\` (`config.json`, `skills\`, `chats\`, `query_history.db`, `vr_snapshots.json`) |
 | macOS | `~/.avio/` |
 | Linux | `$XDG_DATA_HOME/avio/` (default `~/.local/share/avio/`) |
 
-AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
+`chats\` holds AI conversations you chose to keep when closing Avio (plain text, deleted automatically after 3 days; see [docs/ai-connections-and-keys.md](docs/ai-connections-and-keys.md)). AI API keys are **not** stored in this folder: see "AI connections and API keys" below. (If no system keystore is available, keys fall back to a private file in `secrets/` here, which is not encrypted, and Settings says so.)
 
 ## Logging in to a Salesforce org
 
@@ -237,6 +240,8 @@ sf org login web --instance-url <login URL> --alias <alias>
 ```
 
 and the page continues by itself once you finish in the browser (there is a Cancel button, and a 5-minute limit). The same panel opens from **＋ Log in to another org** under the org list, so you can add an org without a terminal. Avio never sees your password; the CLI keeps the session as usual.
+
+Avio asks the CLI for the org list once per launch and keeps it until you close the app, so **Switch Org** opens at once. If you log in to, or out of, an org outside Avio while it is running, use **↻ Refresh org list** under the list.
 
 | Choice | Login URL | Alias |
 |---|---|---|
@@ -282,7 +287,7 @@ AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](h
 - **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill and the SOQL Runner always includes the SOQL skill.
 - **Added skills** (Settings → Skills → Add) are added only when a specific topic word from the skill's name appears in the conversation (`apex-test-generate` loads for "test", `apex-debug-logs` for "debug" or "logs"). The generic words `apex`, `soql` and `sosl` do not count when a skill has a more specific word, so a test-class prompt does not pull in the debug-log skill; a skill named only with such a word (`apex-guide`) loads in that panel. Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
 - **Downloads** fetch `SKILL.md` plus every file it links to: markdown references, and also templates and samples such as `assets/test-class-template.cls` (types `.cls .trigger .apex .soql .xml .json .yaml .yml .txt .js .html .css`, up to 30,000 characters each). Only linked files are used, so a skill with a large `assets/` folder does not send all of it, and scripts are never fetched. The model sees a template as a labelled code block. A skill added by an older build may hold only `SKILL.md`: remove it and add it again (Settings → Skills) to pick up the rest. A skill with templates makes each message larger: Apex Test Generate adds about 25 KB (~6,000 tokens). GitHub / URL sources are cached in memory for an hour.
-- **Local models (Ollama, LM Studio)** usually run with a ~4K-token context, and Ollama silently drops the middle of a longer prompt. So for a local Gateway URL Avio sends a condensed skill summary (about 6,000 characters of each skill's rules, ~1.5K tokens) instead of the full text. Set `"skills_local_budget"` in `config.json` to change it (`0` = no skills for local models, `-1` = send everything, for models run with a large context). The first request to a local model can take a minute or two while it loads.
+- **Local models (Ollama, LM Studio)** usually run with a ~4K-token context, and Ollama silently drops the middle of a longer prompt. So for a local Gateway URL Avio sends a condensed skill summary (about 6,000 characters of each skill's rules, ~1.5K tokens) instead of the full text. Set `"skills_local_budget"` in `config.json` to change it (`0` = no skills for local models, `-1` = send everything, for models run with a large context). The first request to a local model can take a minute or two while it loads. A reply that goes completely silent is given up after 5 minutes (15 for local models); change it with `"chat_timeout_seconds"` in `config.json`. The **■ Stop** button ends a reply at any time and keeps what has arrived.
 
 - **See what was used.** Under every AI reply, a **"Skills used"** line lists the skills Avio actually added to that request (for example "Apex Generate, Apex Test Generate", or "none"). It comes from the backend, not from the model, so there is no need to ask the model whether a skill was loaded; it can't know.
 

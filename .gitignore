@@ -36,3 +36,4 @@ HANDOFF*
 
 # Developer override for the AI layer; copy opencode.config.example.json to create it
 opencode.config.json
+.opencode/

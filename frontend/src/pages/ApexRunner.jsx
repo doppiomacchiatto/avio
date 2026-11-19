@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect } from "react";
-import { api, apiStream, openSaveDialog, openDirDialog } from "../api/client";
+import { api, apiStream, stopStream, openSaveDialog, openDirDialog } from "../api/client";
 import { invoke } from "@tauri-apps/api/core";
 import { apexFileFor, buildExportFiles, metaXml, joinPath, baseName } from "../apexExport";
 import { parseBlocks, isLang, APEX_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
-import { SlowHint, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
+import { SlowHint, StopButton, StoppedNotice, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
 import ConnectionPicker from "../components/ConnectionPicker";
 import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
+import AiSplit from "../components/AiSplit";
+import AiHistoryStrip from "../components/AiHistoryStrip";
 import Spinner from "../components/Spinner";
 import DebugLogPanel from "../components/DebugLogPanel";
 import { debugLog } from "../debugLog";
@@ -202,7 +204,20 @@ Be concise and direct. No need to repeat the question.`;
       () => setTruncated(true),
       // onSkills: which skills the backend really injected into this request
       (names) => { skills = names; setStreamSkills(names); },
+      { surface: "apex" },
     );
+  }
+
+  // Stop: keep what has arrived (marked as stopped) and free the panel. The backend closes the provider connection.
+  function stopReply() {
+    if (!stopStream("apex")) return;
+    if (streamBuf.trim()) {
+      setMessages((prev) => [...prev, { role: "assistant", content: streamBuf, skills: streamSkills, stopped: true }]);
+    }
+    setStreaming(false);
+    setStreamBuf("");
+    setStreamSkills(null);
+    setTruncated(false);
   }
 
   function AssistantMessage({ content }) {
@@ -297,6 +312,8 @@ Be concise and direct. No need to repeat the question.`;
         </div>
       </div>
 
+      <AiHistoryStrip surface="apex" busy={streaming} />
+
       {/* Quick chips */}
       <div className="shrink-0 flex flex-wrap gap-1.5 px-3 py-2 border-b border-slate-700">
         {QUICK_CHIPS.map((c) => (
@@ -334,6 +351,7 @@ Be concise and direct. No need to repeat the question.`;
               <div className="w-full">
                 <AssistantMessage content={msg.content} />
                 <SkillsUsed skills={msg.skills} dark />
+                {msg.stopped && <StoppedNotice dark />}
               </div>
             )}
           </div>
@@ -353,7 +371,7 @@ Be concise and direct. No need to repeat the question.`;
               <span>Thinking…</span>
             </div>
             <SkillsUsed skills={streamSkills} dark />
-            <SlowHint dark />
+            <SlowHint dark local={conn.isLocal} />
           </div>
         )}
         {truncated && !streaming && (
@@ -407,13 +425,17 @@ Be concise and direct. No need to repeat the question.`;
             }}
             rows={1}
           />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={streaming || !input.trim()}
-            className="shrink-0 px-3 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-lg text-xs font-semibold transition-colors"
-          >
-            ↑
-          </button>
+          {streaming ? (
+            <StopButton onStop={stopReply} className="px-3 py-2 rounded-lg text-xs" />
+          ) : (
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={!input.trim()}
+              className="shrink-0 px-3 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-lg text-xs font-semibold transition-colors"
+            >
+              ↑
+            </button>
+          )}
         </div>
         <p className="text-xs text-slate-400 mt-1">↵ send &nbsp;·&nbsp; Shift+↵ newline</p>
       </div>
@@ -507,8 +529,19 @@ export default function ApexRunner({ org, onApiCall }) {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* ── Left: editor + controls ─────────────────────────────────────────── */}
-      <div className={`flex flex-col overflow-hidden transition-all duration-200 ${aiOpen ? "w-1/2" : "flex-1"}`}>
+      {/* ── Left: editor + controls. Right, while open: the AI panel ─────────── */}
+      <AiSplit
+        open={aiOpen}
+        ai={
+          <AiPanel
+            code={code}
+            lastLog={output}
+            onInsert={handleAiInsert}
+            apiVersion={apiVersion}
+            onClose={() => setAiOpen(false)}
+          />
+        }
+      >
 
         {/* Code editor */}
         <div className="flex-1 min-h-0 p-3 pb-0">
@@ -658,20 +691,7 @@ export default function ApexRunner({ org, onApiCall }) {
           heightClass="h-36"
           className="shrink-0"
         />
-      </div>
-
-      {/* ── Right: OpenCode AI panel ──────────────────────────────────────────── */}
-      {aiOpen && (
-        <div className="w-1/2 flex flex-col overflow-hidden border-l border-gray-300 dark:border-gray-700">
-          <AiPanel
-            code={code}
-            lastLog={output}
-            onInsert={handleAiInsert}
-            apiVersion={apiVersion}
-            onClose={() => setAiOpen(false)}
-          />
-        </div>
-      )}
+      </AiSplit>
     </div>
   );
 }

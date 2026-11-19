@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api/client";
+import { api, isLocalUrl } from "./api/client";
 
 // Saved AI connections (provider + URL + model; the API key stays in the OS keystore and is
 // never sent to the UI). Shared by Settings and every AI panel, so one cached copy lives here.
@@ -45,5 +45,6 @@ export function useConnectionChoice(panel) {
     setChosen(id);
     try { id ? localStorage.setItem(storageKey(panel), id) : localStorage.removeItem(storageKey(panel)); } catch { /* storage unavailable */ }
   }, [panel]);
-  return { connections: data.connections, defaultId: data.default, selected, choose };
+  const active = data.connections.find((c) => c.id === (selected || data.default));
+  return { connections: data.connections, defaultId: data.default, selected, choose, isLocal: isLocalUrl(active?.base_url) };
 }

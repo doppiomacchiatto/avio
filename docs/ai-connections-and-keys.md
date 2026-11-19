@@ -82,6 +82,7 @@ In EU and US, a model that OpenRouter hasn't made available in that region fails
 
 - **Only some providers serve each region.** A provider might run a model from a data center in the region, but OpenRouter only uses it once it has onboarded that endpoint for the region. In a guardrail's provider list, a provider with no endpoints in your region shows a **"Not in US region"** (or EU) warning. Today the US region has about 15 providers and the EU region about 5, and a model often runs on only one of them (for example, Gemma and Nemotron run on DeepInfra only in the US region). Allow the providers that actually serve your region, or the model won't be available.
 - **Cloud "global" deployments are excluded.** Endpoints that can process a request in any region, such as Amazon Bedrock's cross-region profiles or Google Vertex's global location, don't count as in-region.
+- **The region is OpenRouter's label, not a promise from the host, and Avio cannot see where a request actually ran.** OpenRouter routes a US-address request only to endpoints it has marked as US, but what happens inside a provider is the provider's own business. For example, DeepInfra (which hosts Gemma and Nemotron in the US region) publishes that it runs data centers across the United States and, since July 2026, one in **Toronto, Canada**, and its documentation offers no way to choose a region. So a DeepInfra model on the US address may be processed in Canada. OpenRouter does not publish DeepInfra's data center locations. If where a prompt is processed matters to you, ask the provider (for DeepInfra, its Trust Center) or OpenRouter, rather than relying on the region setting alone.
 - **Prices can differ.** Some providers charge a premium for serving a model from a specific region. On a regional address those endpoints are used, so a model can cost more than on Global.
 - **To see what a region offers**, use the model list in Settings (it's filtered by your region and workspace), or OpenRouter's models page with the *In-Region Routing* filter. The model list in Settings shows what the region offers. All three addresses use the same OpenRouter key, so switching region keeps your saved key.
 
@@ -110,9 +111,40 @@ Add a second connection with a different name, for example `OpenAI personal` and
 
 ---
 
-## Your conversations are kept until you close Avio
+## Your conversations: keep them, save them, or let them go
 
-The AI panel in the Apex Runner and the SOQL Runner, and the AI Chat tab, each keep their conversation while you use other tabs. Switch away and come back and the panel is still open with its history, and anything you had typed but not sent. A reply that finishes while you are on another tab is waiting for you. **Clear** empties a conversation. The history lives in memory only: it is never written to disk, and closing Avio erases it.
+The AI panel in the Apex Runner and the SOQL Runner, and the AI Chat tab, each keep their conversation while you use other tabs. Switch away and come back and the panel is still open with its history, and anything you had typed but not sent. A reply that finishes while you are on another tab is waiting for you. **Clear** empties a conversation. While Avio is open the history lives in memory only. **Nothing is written to disk unless you ask.**
+
+**When you close Avio** with an AI conversation you have not saved, the close dialog lists them ("Apex Runner (6 messages), AI Chat (2 messages)") and asks:
+
+- **Save & Quit** keeps them on this computer for **3 days**. The next time you open the Apex Runner, SOQL Runner or AI Chat, a line at the top of the panel offers **Restore** (loads it back), **Dismiss** (hides the offer) or **Delete** (removes the saved copy). Avio never restores a conversation by itself.
+- **Discard & Quit** loses them.
+- **Cancel** returns to Avio.
+
+A saved conversation is **deleted automatically 3 days after you saved it**, whether or not you restored it. **⚙ Settings → AI Model → Delete all saved conversations** removes them all now. The offer shows the date the saved copy will be removed.
+
+**To keep a conversation longer, or share it:** each AI panel has **💾 Save to file** and **📂 Load file**. Save to file writes a file you choose: a `.json` file that Avio can load again, or a `.md` file that is just readable text (for reading or sharing: **Avio cannot load a `.md` back**, so choose `.json` if you want to continue the conversation later). A conversation saved only as `.md` still counts as unsaved: when you close Avio, or switch org from AI Chat, it is listed and you can keep it for 3 days. Files you save yourself never expire and Avio never deletes them. **Load file** opens a `.json` file saved from Avio; if the panel already has a conversation you choose **Replace** or **Append**. After loading, Avio shows roughly how many tokens will be sent with your next message, because a loaded conversation becomes context for the model and uses tokens.
+
+**Restore and Load file are different things:**
+
+| | Restore | Load file |
+|---|---|---|
+| What it brings back | The copy Avio kept when you chose **Save & Quit** or **Save & switch** | A `.json` file you wrote yourself with **Save to file** |
+| Where it is | Inside Avio; you do not pick a file | Wherever you saved it; Windows opens the folder you used last |
+| How long it lasts | 3 days | Until you delete the file |
+| Where you find it | The line at the top of the panel ("Avio kept your last … conversation … Restore it?") | The **📂 Load file** button |
+
+A conversation Avio kept for you never shows up in the Load file window.
+
+**Switch Org** starts a new AI Chat, because that chat's object list belongs to the org you are leaving. If it has unsaved messages Avio asks whether to keep them for 3 days or discard them; if you keep them, the **Restore** line appears at the top of the new, empty chat. A reply that is still arriving when you switch is stopped (what had arrived is kept with the saved copy). The Apex Runner and SOQL Runner conversations are not affected.
+
+**Privacy.** Saved conversations and files are **plain text**, protected only by your operating system account. They can contain your Salesforce code, query text and replies that quote your data. They never contain an API key or connection details (keys never reach the page), but anything the AI repeated from your org can be in them. Treat a saved file like the code or data it came from, and check it before sharing. Only the conversation is saved: not the code in the editor, the query or its results.
+
+**Only a load you choose is read.** A file is treated as untrusted: Avio checks that it is a valid Avio conversation, ignores anything it does not understand, refuses very large ones (over 500 messages), and shows the text as text, never as a web page. Be aware that a loaded conversation is sent to your AI provider as context with your next message, so only load files you trust.
+
+**Limits.** Avio can only ask when you close the window or choose Quit. If Windows shuts down, the process is killed, the installer closes Avio, or it crashes, nothing is saved. Where the Apex Runner or SOQL Runner AI panel is closed you will not see its restore offer until you open that panel. Saved conversations are kept to at most 500 messages and about 2 MB of text each (the oldest messages are dropped first); the folder holds at most 60.
+
+Where they are: `chats\` inside Avio's data folder (see the README's "User data").
 
 ## Choose which connection a panel uses
 
@@ -122,6 +154,14 @@ The AI panel in the Apex Runner and the SOQL Runner, and the AI Chat tab, each k
 - If you delete the connection a panel was using, that panel falls back to the default.
 
 ---
+
+## Stop a reply, and long waits
+
+While a reply is coming in, the **↑ / Send** button turns into a red **■ Stop** button. **Stop** ends the reply at once and keeps what had arrived, marked "Stopped by you. This answer is incomplete." Avio also closes the connection to the provider, so it stops generating and you stop paying for tokens you won't read. If nothing had arrived yet, nothing is added to the conversation. You can send again straight away.
+
+Some models take a long time before the first word, especially **reasoning models** such as Grok, which think first: a minute or two is normal. After 8 seconds without any text, the panel says "Still waiting for the model" and reminds you about Stop. (A local model may be loading instead, and the hint says so for local connections.)
+
+If a provider goes completely silent, Avio gives up on its own: **5 minutes** for cloud providers, **15 minutes** for local models, and then says "No reply from … so Avio stopped waiting." Set `chat_timeout_seconds` in `config.json` to change it (see "Advanced").
 
 ## See which skills a reply used
 
@@ -206,6 +246,7 @@ These are for developers and scripted setups. Normal use never needs them.
 | `opencode.config.json` | project root (git-ignored; copy `opencode.config.example.json`) | Same overrides from a file; only applies when running from source. |
 | `max_tokens` / `OPENCODE_MAX_TOKENS` | `config.json` / environment | Reply token limit (default 16,384 cloud, 4,096 local). |
 | `skills_local_budget` | `config.json` | Characters of Salesforce guidance sent to local models (`0` none, `-1` everything). |
+| `chat_timeout_seconds` | `config.json` | How long a reply may stay completely silent before Avio stops waiting (10 to 3600). Default 300 (5 minutes) for cloud models and 900 (15 minutes) for local ones. |
 | `AVIO_SECRET_BACKEND=file` | environment | Force the private file store instead of the system keystore. |
 
 How overrides combine: a panel with a specific connection chosen **ignores** overrides; a panel on "Default" uses the default connection with any override applied on top. An override that points at a different host never uses a saved key; supply `OPENCODE_API_KEY` with it.
@@ -225,6 +266,13 @@ How overrides combine: a panel with a specific connection chosen **ignores** ove
 | **"The provider stopped the reply with an error"** | The provider reported a problem after it had started answering (OpenRouter does this). Earlier versions ended such a reply silently and looked like a short answer. Retry; the message includes the provider's reason. |
 | **404 "model … not found"** | That model isn't available to your key, or the id you typed under "Other" is misspelled. Click **↻ Refresh list** and choose one from it. |
 | **"Couldn't fetch models — showing built-in list"** | The provider rejected the key or URL, or it is unreachable. The list shown is a built-in fallback for that provider; fix the key or URL and refresh. |
+| **"… could not answer for …: error 5xx, …"** or **"The reply from … stopped with error 5xx: …"** (500, 502, 503, 504, 520 to 524, 529) | The provider's server failed. It is not your API key or Avio's settings, and Avio has already tried a second time when the error came before any text. The message says what the code means (522, for example, is a connection timeout between the provider's front door and the server behind it) and quotes the provider's own words when there are any. Send the message again in a moment. On **OpenRouter**, 502 means the model's host is down or answered badly and 503 means no host is available for the model right now: if it keeps happening, pick another model, or allow a second provider for that model in your guardrail, because a model with one allowed host in your region has no fallback. For a **local model**, check that the model server is still running. |
+| **"No reply from … so Avio stopped waiting."** | The provider didn't send anything for 5 minutes (15 for a local model). It may be overloaded or down, or the model was thinking a very long time. Send again; if it repeats, pick another model, or one that more than one host serves. To wait longer, set `chat_timeout_seconds` in `config.json`. |
+| **A reply seems stuck** | Press **■ Stop**, then send again. Quitting Avio also always works. |
+| **"That saved conversation no longer exists"** | Saved conversations are deleted 3 days after saving (or you deleted it). Use 💾 Save to file in a panel to keep one as a file. |
+| **"That file is not an Avio conversation"** (Load file) | Load file needs a `.json` file saved with 💾 Save to file in Avio. A `.md` export is for reading only. |
+| **A conversation I kept with Save & Quit or Save & switch is not in the Load file window** | It is not a file. Open the panel with an empty conversation and use **Restore** in the line at the top. Load file only opens files you saved yourself with 💾 Save to file. |
+| **"Could not save …"** in the close dialog | Avio stays open so nothing is lost. Free some disk space or use 💾 Save to file to write the conversation somewhere else, then close again. |
 | **"The selected connection no longer exists"** | It was deleted. Choose another in the panel dropdown, or add it again. |
 | **Every request fails with "Unauthorized" (in the 🐞 Debug log)** | The page doesn't have the current per-launch token. Quit and relaunch Avio; if it keeps happening, please report it. |
 | **macOS asks to allow Keychain access** | Choose "Always Allow". Until Avio is code-signed this can reappear after an update. |
