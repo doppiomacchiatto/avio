@@ -282,7 +282,7 @@ Under **⚙ Settings → AI Model**, each **AI connection** is one saved provide
 
 ## AI skills
 
-AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](https://github.com/forcedotcom/sf-skills) (`backend/sf_skills.py`).
+AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](https://github.com/forcedotcom/sf-skills) (`backend/sf_skills.py`). The bundled skill files are unmodified copies of that project, Copyright (c) 2026 Salesforce, Inc., used under the Apache License 2.0; the license text is in [`backend/sf_skills/LICENSE.txt`](backend/sf_skills/LICENSE.txt).
 
 - **Built-in skills** (`platform-apex-generate`, `platform-soql-query`) are added when the recent user messages contain Apex / SOQL keywords. The Apex Runner always includes the Apex skill and the SOQL Runner always includes the SOQL skill.
 - **Added skills** (Settings → Skills → Add) are added only when a specific topic word from the skill's name appears in the conversation (`apex-test-generate` loads for "test", `apex-debug-logs` for "debug" or "logs"). The generic words `apex`, `soql` and `sosl` do not count when a skill has a more specific word, so a test-class prompt does not pull in the debug-log skill; a skill named only with such a word (`apex-guide`) loads in that panel. Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
