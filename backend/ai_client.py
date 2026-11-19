@@ -49,6 +49,9 @@ _MAX_TOKEN_LADDER = (16384, 8192, 4096, 2048)
 # word, so cloud gets 5; a local model may also have to load, so it gets 15.
 CLOUD_CHAT_TIMEOUT = 300
 LOCAL_CHAT_TIMEOUT = 900
+# The SDK sends a chat request again after a timeout or a 5xx. One retry (its default is two) so a
+# host that never answers costs one extra wait, not two.
+CHAT_MAX_RETRIES = 1
 
 CONFIG_PATH      = avio_data_dir() / "config.json"
 API_KEY_PATH     = avio_data_dir() / "api_key"
@@ -453,10 +456,80 @@ def _openrouter_403_message(p: dict, r: "Resolved", model: Optional[str]) -> str
     return "\n\n".join(parts)
 
 
+# What a 5xx status means, in the words used in the panel. 520-527 are Cloudflare's codes for "the
+# server behind me did not answer properly"; most AI providers sit behind Cloudflare.
+_SERVER_ERRORS = {
+    500: "an internal error on its side",
+    502: "a bad gateway (the server behind it gave no valid answer)",
+    503: "service unavailable",
+    504: "a gateway timeout (the server behind it took too long)",
+    520: "an unknown error from the server behind it",
+    521: "the server behind it is down",
+    522: "a connection timeout (the server behind it could not be reached in time)",
+    523: "the server behind it is unreachable",
+    524: "a timeout (the server behind it took too long to answer)",
+    529: "the provider is overloaded",
+}
+_OR_SERVER_ERRORS = {
+    502: "the model's host is down or returned an invalid response",
+    503: "no host is available for this model right now",
+}
+
+
+def _server_error_detail(p: dict, body: object = None) -> str:
+    """The provider's own words for a server error, or "" when there is nothing worth quoting: an
+    HTML error page is reduced to its title, and the SDK's bare "Error code: 522" is dropped.
+    `body` is the SDK error's body, which is plain text (often that HTML page) when it is not JSON."""
+    detail = str(p["raw"] or (body if isinstance(body, str) and body.strip() else "") or p["message"] or "")
+    if re.search(r"<\s*(!doctype|html|head|body)\b", detail, re.IGNORECASE):
+        title = re.search(r"<title[^>]*>(.*?)</title>", detail, re.IGNORECASE | re.DOTALL)
+        detail = re.sub(r"<[^>]+>", " ", title.group(1)) if title else ""
+    detail = _clip(detail)
+    return "" if re.fullmatch(r"(error code:?\s*)?\d{3}\.?", detail, re.IGNORECASE) else detail
+
+
+def _server_error_message(exc: Exception, p: dict, r: Optional["Resolved"], model: Optional[str]) -> str:
+    """A 5xx is the provider's failure, not a wrong key or setting: say so, say whether Avio already
+    retried, and say what to do. Without this the panel showed the raw error, sometimes a whole
+    HTML error page."""
+    status = p["status"]
+    host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
+    label = (model or (r.model if r else "") or "").strip()
+    openrouter = bool(r) and _is_openrouter(r.base_url)
+    meaning = (_OR_SERVER_ERRORS.get(status) if openrouter else None) or _SERVER_ERRORS.get(status, "a server error")
+    # An HTTP status error is raised before any text arrives, after the SDK's own retry. An error
+    # reported inside the stream has no HTTP status of its own and is not retried.
+    before_reply = getattr(exc, "status_code", None) is not None
+    if before_reply:
+        first = f"{host} could not answer" + (f" for {label}" if label else "") + f": error {status}, {meaning}."
+    else:
+        first = f"The reply from {host}" + (f" for {label}" if label else "") + f" stopped with error {status}: {meaning}."
+    cause = "This is a problem on the provider's side, not your API key or Avio's settings."
+    if before_reply and CHAT_MAX_RETRIES:
+        cause += " Avio already tried again " + ("once" if CHAT_MAX_RETRIES == 1 else f"{CHAT_MAX_RETRIES} times") + "."
+    parts = [first, cause]
+    if r and r.local:
+        parts.append("Check that the local model server is still running and the model is loaded, then send again.")
+    elif openrouter:
+        wait = _retry_seconds(p["headers"])
+        parts.append(("Wait " + _human_wait(wait) + " and send again." if wait else "Send the message again in a moment.") +
+                     " If it keeps happening, pick another model, or allow a second provider for this model in your "
+                     "OpenRouter guardrail: a model with one allowed host in your region has no fallback.")
+    else:
+        parts.append("Send the message again in a moment. If it keeps happening, check the provider's status page "
+                     "or use another connection.")
+    detail = _server_error_detail(p, getattr(exc, "body", None))
+    if detail:
+        who = f" ({p['provider']})" if p["provider"] else ""
+        parts.append(f'The provider said{who}: "{detail}"')
+    return "\n\n".join(parts)
+
+
 def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Optional[str] = None) -> str:
-    """The text shown in the AI panel for a failed request. Rate limits (429) get a plain
-    explanation of what happened and what to do; every other error keeps its original text,
-    except an error reported mid-stream, which now surfaces instead of passing as a finish."""
+    """The text shown in the AI panel for a failed request. Rate limits (429), server errors (5xx),
+    OpenRouter refusals (403) and timeouts get a plain explanation of what happened and what to do;
+    every other error keeps its original text, except an error reported mid-stream, which now
+    surfaces instead of passing as a finish."""
     if _is_timeout(exc):
         host = (urlparse(r.base_url).hostname or "the provider") if r else "the provider"
         secs = _load_chat_timeout(r.base_url if r else "")
@@ -475,6 +548,8 @@ def describe_error(exc: Exception, r: Optional["Resolved"] = None, model: Option
     p = _error_parts(exc)
     if p["status"] == 403 and r and _is_openrouter(r.base_url):
         return _openrouter_403_message(p, r, model)
+    if p["status"] is not None and 500 <= p["status"] <= 599:
+        return _server_error_message(exc, p, r, model)
     if p["status"] != 429:
         if isinstance(exc, ProviderStreamError):
             code = f" (code {p['status']})" if p["status"] else ""
@@ -674,10 +749,9 @@ class AIClient:
         client = self._clients.get(key)
         if client is None:
             kwargs = _client_kwargs(r.api_key, r.base_url)
-            # `read` is the longest silence allowed. One retry (the default is two) so a host that
-            # never answers costs one extra wait, not two.
+            # `read` is the longest silence allowed.
             kwargs.update(timeout=openai.Timeout(connect=15.0, read=float(timeout), write=60.0, pool=15.0),
-                          max_retries=1)
+                          max_retries=CHAT_MAX_RETRIES)
             client = openai.OpenAI(**kwargs)
             self._clients[key] = client
         return client
