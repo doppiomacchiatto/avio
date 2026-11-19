@@ -1,4 +1,4 @@
-# Avio v1.0.3 Beta — Salesforce Metadata Explorer
+# Avio v1.0.4 Beta — Salesforce Metadata Explorer
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Avio-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/doppiomacchiato)
 
@@ -18,7 +18,7 @@ Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (
 **Not code-signed yet.** Windows SmartScreen may show "Windows protected your PC": click **More info → Run anyway**. Each release lists the SHA-256 of its installers; to check yours:
 
 ```powershell
-Get-FileHash .\Avio_1.0.3_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Avio_1.0.4_x64-setup.exe -Algorithm SHA256
 ```
 
 Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically on first run.
@@ -288,6 +288,8 @@ AI chats are augmented with Salesforce guidance from [`forcedotcom/sf-skills`](h
 - **Added skills** (Settings → Skills → Add) are added only when a specific topic word from the skill's name appears in the conversation (`apex-test-generate` loads for "test", `apex-debug-logs` for "debug" or "logs"). The generic words `apex`, `soql` and `sosl` do not count when a skill has a more specific word, so a test-class prompt does not pull in the debug-log skill; a skill named only with such a word (`apex-guide`) loads in that panel. Skills whose names have no topic words are always included. Total added-skill text is capped at 60,000 characters, best matches first. To inject every added skill regardless, set `"skills_inject": "all"` in `config.json`.
 - **Downloads** fetch `SKILL.md` plus every file it links to: markdown references, and also templates and samples such as `assets/test-class-template.cls` (types `.cls .trigger .apex .soql .xml .json .yaml .yml .txt .js .html .css`, up to 30,000 characters each). Only linked files are used, so a skill with a large `assets/` folder does not send all of it, and scripts are never fetched. The model sees a template as a labelled code block. A skill added by an older build may hold only `SKILL.md`: remove it and add it again (Settings → Skills) to pick up the rest. A skill with templates makes each message larger: Apex Test Generate adds about 25 KB (~6,000 tokens). GitHub / URL sources are cached in memory for an hour.
 - **Local models (Ollama, LM Studio)** usually run with a ~4K-token context, and Ollama silently drops the middle of a longer prompt. So for a local Gateway URL Avio sends a condensed skill summary (about 6,000 characters of each skill's rules, ~1.5K tokens) instead of the full text. Set `"skills_local_budget"` in `config.json` to change it (`0` = no skills for local models, `-1` = send everything, for models run with a large context). The first request to a local model can take a minute or two while it loads. A reply that goes completely silent is given up after 5 minutes (15 for local models); change it with `"chat_timeout_seconds"` in `config.json`. The **■ Stop** button ends a reply at any time and keeps what has arrived.
+
+- **Small-context cloud models**: when a model's context window is known (from the provider's model list) and the full guidance would not fit with the conversation and the reply limit, Avio sends the condensed summary instead, or no guidance if even that is too big, and says so in the **🧠 Skills used** line. A "context too long" error before any text arrives is retried once with less guidance. Set `"skills_context_guard": false` in `config.json` to always send the full text.
 
 - **See what was used.** Under every AI reply, a **"Skills used"** line lists the skills Avio actually added to that request (for example "Apex Generate, Apex Test Generate", or "none"). It comes from the backend, not from the model, so there is no need to ask the model whether a skill was loaded; it can't know.
 

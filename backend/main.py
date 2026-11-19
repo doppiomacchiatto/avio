@@ -35,7 +35,7 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, StreamFinish, describe_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+from ai_client import AIClient, StreamFinish, describe_error, model_context_length, estimate_tokens, load_max_tokens, is_context_length_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
 import chat_store
 import connections
 import org_login
@@ -934,6 +934,52 @@ def _sse_error(message: str) -> StreamingResponse:
                              media_type="text/event-stream")
 
 
+# Context-size guard (config "skills_context_guard", default on). The skill text can be ~90 KB, more
+# than a small-context model accepts with the conversation and the reply limit. When the model's
+# context is known, keep the estimate under this share of it by condensing the skills, then dropping
+# them; a provider that still answers "context too long" gets one retry with less skill text.
+_CONTEXT_FILL = 0.85
+_TOO_SMALL = "model context too small"
+_SKILLS_DROPPED = f"none ({_TOO_SMALL} for skills)"
+
+
+def _context_guard_on() -> bool:
+    return _load_config().get("skills_context_guard", True) is not False
+
+
+def _mark_condensed(names: list[str]) -> list[str]:
+    return [(n[: -len(" (condensed)")] if n.endswith(" (condensed)") else n) + f" (condensed: {_TOO_SMALL})"
+            for n in names]
+
+
+def _skills_for_request(req: "ChatRequest", resolved, level: str = "full") -> tuple[str, list[str], str]:
+    """System prompt with skills, the names for the "Skills used" line, and the level used:
+    "full" (normal; condensed already for local models), "condensed" or "dropped"."""
+    if level == "full":
+        system, names = augment_with_skills(req.system, req.messages, req.force_skills, local=resolved.local)
+        if not names or not _context_guard_on():
+            return system, names, "full"
+        ctx = model_context_length(resolved, req.model or resolved.model)
+        if not ctx:
+            return system, names, "full"
+        room = ctx * _CONTEXT_FILL - load_max_tokens(resolved.base_url)
+        if estimate_tokens(system, req.messages) <= room:
+            return system, names, "full"
+        log.info("skills: prompt too big for a %d-token context, condensing the skills", ctx)
+        system, names = augment_with_skills(req.system, req.messages, req.force_skills,
+                                            local=resolved.local, condensed=True)
+        if names and estimate_tokens(system, req.messages) <= room:
+            return system, _mark_condensed(names), "condensed"
+        log.info("skills: still too big for a %d-token context, sending no skill text", ctx)
+        return req.system or "", [_SKILLS_DROPPED], "dropped"
+    if level == "condensed":
+        system, names = augment_with_skills(req.system, req.messages, req.force_skills,
+                                            local=resolved.local, condensed=True)
+        if names:
+            return system, _mark_condensed(names), "condensed"
+    return req.system or "", [_SKILLS_DROPPED], "dropped"
+
+
 @app.post("/api/ai/chat")
 def ai_chat(req: ChatRequest):
     try:
@@ -944,19 +990,42 @@ def ai_chat(req: ChatRequest):
     except RuntimeError as e:      # no key / no model chosen
         return _sse_error(str(e))
     # Local models (Ollama etc.) have small context windows: send a condensed skill summary.
-    augmented_system, skill_names = augment_with_skills(req.system, req.messages, req.force_skills,
-                                                        local=resolved.local)
+    # A cloud model whose known context is too small gets the same (see _skills_for_request).
+    augmented_system, skill_names, level = _skills_for_request(req, resolved)
+
+    def _event(names: list[str], lvl: str) -> str:
+        ev: dict = {"skills": names}
+        if lvl != "full":
+            ev["skills_guard"] = lvl
+        return f"data: {json.dumps(ev)}\n\n"
+
     def _stream():
+        system, names, lvl = augmented_system, skill_names, level
+        streamed = retried = False
         try:
             # Tell the UI which skills were really injected (first event, even when none).
-            yield f"data: {json.dumps({'skills': skill_names})}\n\n"
-            for chunk in _ai.stream(req.messages, system=augmented_system, model=req.model or None,
-                                    resolved=resolved, request_id=_clean_request_id(req.request_id)):
-                if isinstance(chunk, StreamFinish):
-                    if chunk.truncated:   # the model hit its token limit mid-answer
-                        yield f"data: {json.dumps({'truncated': True})}\n\n"
-                    continue
-                yield f"data: {json.dumps({'delta': chunk})}\n\n"
+            yield _event(names, lvl)
+            while True:
+                try:
+                    for chunk in _ai.stream(req.messages, system=system, model=req.model or None,
+                                            resolved=resolved, request_id=_clean_request_id(req.request_id)):
+                        if isinstance(chunk, StreamFinish):
+                            if chunk.truncated:   # the model hit its token limit mid-answer
+                                yield f"data: {json.dumps({'truncated': True})}\n\n"
+                            continue
+                        streamed = True
+                        yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                    break
+                except Exception as e:
+                    # "Prompt too long" before any text: try once more with less skill text.
+                    if (streamed or retried or lvl == "dropped" or not names
+                            or not _context_guard_on() or not is_context_length_error(e)):
+                        raise
+                    retried = True
+                    system, names, lvl = _skills_for_request(req, resolved,
+                                                             "condensed" if lvl == "full" and not resolved.local else "dropped")
+                    log.info("skills: provider said the prompt is too long, retrying with skills %s", lvl)
+                    yield _event(names, lvl)    # replaces the first one in the panel
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': describe_error(e, resolved, req.model or resolved.model)})}\n\n"
