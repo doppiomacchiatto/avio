@@ -220,6 +220,8 @@ npx tauri build
 # → src-tauri/target/release/bundle/appimage/Avio_*.AppImage (Linux)
 ```
 
+**Clean build in one step:** `clean-build.bat` (Windows) or `./clean-build.sh` (macOS, Linux, Git Bash) removes the old outputs (`frontend/dist`, `backend/dist`, `backend/build`, `src-tauri/target/release/bundle`), sets `RUSTFLAGS` so the build machine's home path is not embedded, runs `npm run tauri:build`, and prints the SHA-256 of each installer. Options: `--deps` reinstalls Node and Python dependencies, `--full` also runs `cargo clean` (much slower next build), `--no-build` only cleans. Close Avio first; the script stops if it is running. Cleaning deletes the previous installers, so copy them out first if they still need publishing.
+
 `npm run tauri:build` runs the backend and Tauri steps together (the frontend is built by Tauri's `beforeBuildCommand`). The release binaries are not code-signed yet.
 
 CI (`.github/workflows/`): `test.yml` runs `npm test` and the browser tests on every branch push and pull request (Windows runner). Pushing a `v<version>-beta` tag runs `release.yml`: the tests, then the installers, then a GitHub pre-release with the `.exe`, the `.msi` and `SHA256SUMS.txt` attached and `RELEASE-NOTES-v<version>-beta.md` (below its `---` line, with the real hashes filled in) as body. The tag must match the version in `package.json`. Running `release.yml` by hand builds the installers as a workflow artifact without publishing.
