@@ -2,6 +2,7 @@ import sys, os, tempfile, json, time, threading, http.server
 tmp = tempfile.mkdtemp()
 os.environ["APPDATA"] = tmp; os.environ["HOME"] = tmp; os.environ["XDG_DATA_HOME"] = tmp
 os.environ["AVIO_API_TOKEN"] = "test-token"
+os.environ["AVIO_SECRET_BACKEND"] = "file"   # the "Fake"/"Slow" connection keys stay in tmp, never in Credential Manager
 REPO = __import__("pathlib").Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "backend"))
 import ai_client

@@ -10,7 +10,7 @@ and exits non-zero on a crash. A suite has failed if any line starts with `FAIL`
 |---|---|---|
 | `backend/` | Python suites for `backend/` (`test_*.py`): connections and keystore, AI client, skills, error messages, workspace models, org login, saved chats, Stop/timeout, context-size guard | `backend/.venv` |
 | `frontend/` | node suites for `frontend/src/` (`test_*.mjs`): block parser, chat system prompt, session store, chat history, history strip rendered through Vite | `frontend/node_modules` |
-| `e2e/` | Playwright browser runs against the real backend and the real UI (`e2e_*.mjs`, `e2e.mjs`); `browser.mjs` finds Edge/Chrome | servers, see below; `npm install` in `tests/e2e` (the runner does it) |
+| `e2e/` | Playwright browser runs against the real backend and the real UI (`e2e_*.mjs`, `e2e.mjs`); `browser.mjs` finds Edge/Chrome; `harness/` + `vite.harness.config.mjs`: the test page for `e2e_stop.mjs` and `e2e.mjs` | servers, see below; `npm install` in `tests/e2e` (the runner does it) |
 | `fixtures/` | helpers the suites start: `fake_provider.py` (fake OpenAI-style provider, port 7898: 429 with `Retry-After`, mid-stream error, HTML 522), `fake_slow.py` (slow/silent provider, port 7889, logs closed connections to the file given as its argument), `stub_sf.py` + `stub_sf.cmd` (stand-in for the `sf` CLI) | |
 | `packaged/` | checks of an installed release build: `frozen_verify.ps1`, `byte_scan.ps1` | Windows, an installed build |
 
@@ -37,12 +37,15 @@ every suite's full output. A single suite can also be run directly, e.g.
 The runner starts, and afterwards kills (process tree), three servers:
 
 - the backend from source (`backend/main.py`) on **7893**, with a fresh temporary `APPDATA` (its `config.json` sets
-  `chat_timeout_seconds: 10`) and **no** `AVIO_API_TOKEN`;
-- `npx vite --port 5199 --strictPort` in `frontend/` (**5199**);
+  `chat_timeout_seconds: 10`), `AVIO_SECRET_BACKEND=file` (the scripts' connection keys stay in that folder, never in
+  Credential Manager) and **no** `AVIO_API_TOKEN`;
+- `npx vite --config ../tests/e2e/vite.harness.config.mjs` in `frontend/` (**5199**): the app's own Vite config
+  plus the harness page (below);
 - `fixtures/fake_slow.py <close-log>` on **7889** (use `127.0.0.2` in a connection URL for a "cloud" provider; `127.0.0.1` counts as local).
 
-It refuses to start if any of those ports is taken, and checks that the backend on 7893 has no saved chats before
-running (the scripts call `/api/chats/delete-all`). The scripts set `window.__SF_BACKEND_PORT__` and mock
+It refuses to start if any of those ports is taken, and before running checks that the backend on 7893 is the
+isolated one (no saved chats, and a probe chat it saves lands in the temp `APPDATA`; the scripts call
+`/api/chats/delete-all`) and that 5199 serves the harness page. The scripts set `window.__SF_BACKEND_PORT__` and mock
 `/api/orgs*` and `/api/sf-version` with Playwright routes: no `sf` CLI and no real org is touched. `App.jsx` calls
 Tauri's `listen()` in a plain browser, which throws `transformCallback` errors: expected and ignored.
 
@@ -50,17 +53,22 @@ Tauri's `listen()` in a plain browser, which throws `transformCallback` errors: 
 |---|---|---|
 | `e2e_switch.mjs` | always | Switch Org in the real App; needs `fake_slow.py` and its close-log path as argument |
 | `e2e_panel.mjs` | always | AI side panel width/resize/colours; no fake provider |
-| `e2e_stop.mjs` | only if `frontend/_harness/index.html` exists | Stop button, wait hint and timeout in the three AI panels |
-| `e2e.mjs` | only if `frontend/_harness/index.html` exists | saved-chat strip: restore, save, load, bad files |
+| `e2e_stop.mjs` | always | Stop button, wait hint and timeout in the three AI panels (harness page); needs the close-log path |
+| `e2e.mjs` | always | saved-chat strip: restore, save, load, bad files, Delete, Dismiss (harness page) |
 
-`e2e_stop.mjs` and `e2e.mjs` were written against a throwaway harness page (`frontend/_harness/index.html`,
-rendering ClaudeChat, SoqlRunner and ApexRunner by `?p=chat|soql|apex`, plus a `#msgs` element with the current
-messages as JSON for `e2e.mjs`). That page was deleted after use and is not in the repo; recreate it under
-`tests/e2e/harness/` (copied to `frontend/_harness/` only while running, never committed under `frontend/`) before
-these two can run again.
+**The harness page.** `e2e_stop.mjs` and `e2e.mjs` open `http://localhost:5199/_harness/index.html`. Its source is
+`tests/e2e/harness/` (`index.html`, `main.jsx`); `vite.harness.config.mjs` keeps `frontend/` as Vite's root (so
+`/src/...` are the real modules, the same instances the scripts import from the page, styled by the real
+`index.css`) and serves `/_harness/*` from `tests/e2e/harness/`. Nothing is copied into `frontend/`, and
+`vite build` (which uses `frontend/vite.config.js`) never sees the harness, so it cannot reach `dist` or the
+installer. The page sets `window.__SF_BACKEND_PORT__ = 7893` and renders:
+
+- `?p=chat|soql|apex`: the real ClaudeChat, SoqlRunner or ApexRunner page with no org and its AI panel open;
+- no `p`: the real `AiHistoryStrip` for the Apex surface, a `#msgs` element with the conversation as JSON, and
+  `#add` / `#clear` buttons that change it the way a panel does.
 
 To run a browser script by hand, start the three servers as above, then `node tests/e2e/e2e_panel.mjs` (or
-`e2e_switch.mjs <close-log>`), and stop the servers afterwards (`taskkill /T /F /PID <owner of 7893, 5199, 7889>`).
+`e2e_switch.mjs <close-log>`, `e2e_stop.mjs <close-log>`, `e2e.mjs`), and stop the servers afterwards (`taskkill /T /F /PID <owner of 7893, 5199, 7889>`).
 
 ### Installed-build checks (`--packaged`, Windows)
 

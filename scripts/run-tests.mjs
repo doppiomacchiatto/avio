@@ -2,7 +2,8 @@
 // Runs Avio's test suites (see tests/README.md).
 //   node scripts/run-tests.mjs              backend (Python) + frontend (node) suites
 //   node scripts/run-tests.mjs --e2e        also the browser tests: starts the backend on 7893 (temp APPDATA,
-//                                           no token), vite on 5199 and fake_slow.py on 7889, then stops them
+//                                           no token), vite on 5199 (with the tests/e2e/harness page) and
+//                                           fake_slow.py on 7889, then stops them
 //   node scripts/run-tests.mjs --packaged   also the checks of the INSTALLED build (Windows only)
 //   --only=<substring>                      run only the suites whose file name contains it
 // A suite fails if it prints a line starting with "FAIL" (case-sensitive) or exits non-zero.
@@ -82,25 +83,34 @@ async function e2e() {
       : spawn(cmd, a, { cwd, env, stdio: ["ignore", out, out], windowsHide: true });
     procs.push(p); return p;
   };
-  const beEnv = { ...ENV, APPDATA: appdata, HOME: appdata, XDG_DATA_HOME: appdata, SF_BACKEND_PORT: "7893" };
+  // AVIO_SECRET_BACKEND=file: the scripts' connection keys ("k") go to the temp APPDATA, never Credential Manager
+  const beEnv = { ...ENV, APPDATA: appdata, HOME: appdata, XDG_DATA_HOME: appdata, SF_BACKEND_PORT: "7893", AVIO_SECRET_BACKEND: "file" };
   delete beEnv.AVIO_API_TOKEN;
   try {
     start(PY, ["main.py"], path.join(REPO, "backend"), beEnv, "backend.log");
-    start("npx", ["vite", "--port", "5199", "--strictPort"], path.join(REPO, "frontend"), process.env, "vite.log");
+    // the app's own vite config plus /_harness/ served from tests/e2e/harness (nothing is written into frontend/)
+    start("npx", ["vite", "--config", "../tests/e2e/vite.harness.config.mjs"], path.join(REPO, "frontend"), process.env, "vite.log");
     start(PY, [path.join(T, "fixtures", "fake_slow.py"), closeLog], tmp, ENV, "fake_slow.log");
     const up = async (url) => { for (let i = 0; i < 120; i++) { try { await fetch(url, { signal: AbortSignal.timeout(1500) }); return true; } catch { await new Promise((r) => setTimeout(r, 500)); } } return false; };
-    if (!(await up("http://127.0.0.1:7893/api/health")) || !(await up("http://localhost:5199/"))) {
+    if (!(await up("http://127.0.0.1:7893/api/health")) || !(await up("http://localhost:5199/_harness/index.html"))) {
       console.log(`FAIL  e2e: backend or vite did not start (logs in ${tmp})`); results.push({ name: "e2e setup", ok: false }); return;
     }
+    // e2e.mjs calls /api/chats/delete-all: make sure 7893 is the backend started above, on the temp APPDATA
     const chats = await (await fetch("http://127.0.0.1:7893/api/chats")).json();
     if ((chats.chats || []).length) { console.log("FAIL  e2e: the backend on 7893 has saved chats: not the isolated one"); results.push({ name: "e2e setup", ok: false }); return; }
-    const harness = fs.existsSync(path.join(REPO, "frontend", "_harness", "index.html"));
+    // and that what it saves lands in the temp APPDATA: save a probe chat, look for its file, delete it again
+    const probe = await (await fetch("http://127.0.0.1:7893/api/chats", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ surface: "chat", messages: [{ role: "user", content: "e2e isolation probe" }] }) })).json();
+    const chatsDir = path.join(appdata, "Avio", "chats");
+    const isolated = fs.existsSync(chatsDir) && fs.readdirSync(chatsDir).length > 0;
+    if (probe?.id) await fetch("http://127.0.0.1:7893/api/chats/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: probe.id }) });
+    if (!isolated) { console.log(`FAIL  e2e: the backend on 7893 does not write to the temp APPDATA (${appdata})`); results.push({ name: "e2e setup", ok: false }); return; }
+    const harnessPage = await (await fetch("http://localhost:5199/_harness/index.html")).text();
+    if (!harnessPage.includes("Avio e2e harness")) { console.log("FAIL  e2e: vite on 5199 does not serve the harness page"); results.push({ name: "e2e setup", ok: false }); return; }
     run("e2e_switch.mjs", process.execPath, [path.join(T, "e2e", "e2e_switch.mjs"), closeLog], { cwd: path.join(T, "e2e") });
     run("e2e_panel.mjs", process.execPath, [path.join(T, "e2e", "e2e_panel.mjs")], { cwd: path.join(T, "e2e") });
-    if (harness) {
-      run("e2e_stop.mjs", process.execPath, [path.join(T, "e2e", "e2e_stop.mjs"), closeLog], { cwd: path.join(T, "e2e") });
-      run("e2e.mjs", process.execPath, [path.join(T, "e2e", "e2e.mjs")], { cwd: path.join(T, "e2e") });
-    } else console.log("skip  e2e_stop.mjs, e2e.mjs: need a frontend/_harness/ page (see tests/README.md)");
+    run("e2e_stop.mjs", process.execPath, [path.join(T, "e2e", "e2e_stop.mjs"), closeLog], { cwd: path.join(T, "e2e") });
+    run("e2e.mjs", process.execPath, [path.join(T, "e2e", "e2e.mjs")], { cwd: path.join(T, "e2e") });
   } finally {
     for (const p of procs) {
       if (WIN) spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)], { stdio: "ignore" });
