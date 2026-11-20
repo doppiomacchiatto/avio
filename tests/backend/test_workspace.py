@@ -51,7 +51,7 @@ class FakeOpenAI:                         # the ordinary SDK path: /models with 
     @property
     def models(self):
         FakeOpenAI.calls += 1
-        return NS(list=lambda: NS(data=[NS(id="z/plain-list"), NS(id="a/another")]))
+        return NS(list=lambda: NS(data=[NS(id="z/plain-list", model_extra=None), NS(id="a/another", model_extra=None)]))
 real_openai = ai_client.openai.OpenAI
 ai_client.openai.OpenAI = FakeOpenAI
 
