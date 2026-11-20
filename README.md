@@ -222,6 +222,8 @@ npx tauri build
 
 `npm run tauri:build` runs the backend and Tauri steps together (the frontend is built by Tauri's `beforeBuildCommand`). The release binaries are not code-signed yet.
 
+CI (`.github/workflows/`): `test.yml` runs `npm test` and the browser tests on every branch push and pull request (Windows runner). Pushing a `v<version>-beta` tag runs `release.yml`: the tests, then the installers, then a GitHub pre-release with the `.exe`, the `.msi` and `SHA256SUMS.txt` attached and `RELEASE-NOTES-v<version>-beta.md` (below its `---` line, with the real hashes filled in) as body. The tag must match the version in `package.json`. Running `release.yml` by hand builds the installers as a workflow artifact without publishing.
+
 ## User data
 
 | OS | Location |
