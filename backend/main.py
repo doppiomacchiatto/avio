@@ -35,7 +35,7 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, StreamFinish, describe_error, model_context_length, estimate_tokens, load_max_tokens, is_context_length_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+from ai_client import AIClient, StreamFinish, describe_error, model_context_length, estimate_tokens, load_max_tokens, is_context_length_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH, _is_local
 import chat_store
 import connections
 import org_login
@@ -153,7 +153,6 @@ class SettingsRequest(BaseModel):
     skills_source:   Optional[str]  = None   # "bundled" | "path" | "url"
     skills_path:     Optional[str]  = None
     skills_url:      Optional[str]  = None
-    custom_skills:   Optional[list] = None   # [{name, path}]
 
 @app.get("/api/settings")
 def get_settings():
@@ -200,7 +199,6 @@ def get_settings():
         "skills_source":  cfg.get("skills_source",  "bundled"),
         "skills_path":    cfg.get("skills_path",    ""),
         "skills_url":     cfg.get("skills_url",     ""),
-        "custom_skills":  cfg.get("custom_skills",  []),
     }
 
 class ModelsRequest(BaseModel):
@@ -248,7 +246,7 @@ def _fallback_models(url: str) -> list:
         return [m for m in AVAILABLE_MODELS if re.match(r"(gpt-|o\d)", m["id"])]
     if "anthropic.com" in u:
         return [m for m in AVAILABLE_MODELS if m["id"].startswith("claude-")]
-    if any(h in u for h in ("localhost", "127.0.0.1", "[::1]")):
+    if _is_local(url):
         return []                       # a local server's models are whatever you pulled
     return AVAILABLE_MODELS
 
@@ -270,7 +268,6 @@ def post_settings(req: SettingsRequest):
         skills_source=req.skills_source,
         skills_path=req.skills_path,
         skills_url=req.skills_url,
-        custom_skills=req.custom_skills,
     )
     _ai.invalidate()
     return {"ok": True}

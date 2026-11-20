@@ -37,3 +37,7 @@ HANDOFF*
 # Developer override for the AI layer; copy opencode.config.example.json to create it
 opencode.config.json
 .opencode/
+
+# Tests: personal strings for the byte scan (never commit), files the org-login stub may write
+tests/packaged/scan-strings.local.txt
+tests/fixtures/stub_*.txt

@@ -58,6 +58,8 @@ Checked on 2026-11-15:
 
 Both workflows should run the tests, so they must be committed first.
 
+**Done (2026-11-20):** the suites are in [`tests/`](../tests/README.md) (`backend/`, `frontend/`, `e2e/`, `fixtures/`, `packaged/`) with repo-relative paths and one runner, `scripts/run-tests.mjs` (`npm test`, `npm run test:e2e`, `npm run test:packaged`). Still open from the list below: a POSIX variant of the `sf` stub, `AVIO_SECRET_BACKEND=file` in CI, and keeping network checks out of pass/fail. The original plan:
+
 - Put the Python suites under `backend/tests/` and the block-parser test under `frontend/` (or `scripts/`), and run them from one command (for example `npm test`).
 - Replace hard-coded `C:\Users\<user>\...` paths with paths relative to the repo.
 - `test_orglogin.py` uses a `.cmd` stub for `sf` and `taskkill`/`tasklist` to prove the process tree is killed. Give it a POSIX variant (a shell-script stub, `kill -0`/`ps`) so it runs on macOS and Linux runners.
@@ -167,7 +169,7 @@ A reviewer reads the diff (these are prompts), decides, merges, and only then ch
 
 ## Suggested steps
 
-1. Commit the tests into the repo, make them cross-platform, add `npm test`.
+1. ~~Commit the tests into the repo, add `npm test`~~ (done: `tests/`); make them cross-platform.
 2. Add a `test` workflow (push and pull request) running them on Windows, macOS and Linux.
 3. Add the tag-triggered build workflow (piece B) with `workflow_dispatch` dry run first; verify the three platform builds produce working installers.
 4. Add the version-consistency check.

@@ -19,6 +19,7 @@ Optional config.json keys: "max_tokens" (reply limit), "skills_inject",
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -107,7 +108,6 @@ def save_config(
     skills_source:  Optional[str]  = None,
     skills_path:    Optional[str]  = None,
     skills_url:     Optional[str]  = None,
-    custom_skills:  Optional[list] = None,
 ) -> None:
     """Merge model/base_url/theme/skills settings into ~/.avio_config.json."""
     cfg = _load_avio_config()
@@ -125,8 +125,6 @@ def save_config(
         cfg["skills_path"] = skills_path
     if skills_url is not None:
         cfg["skills_url"] = skills_url
-    if custom_skills is not None:
-        cfg["custom_skills"] = custom_skills
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
 
 
@@ -286,8 +284,75 @@ _NON_CHAT_HINTS = ("embed", "whisper", "tts", "dall-e", "moderation", "davinci",
                    "transcribe", "realtime", "rerank", "image", "audio")
 
 
+# What counts as a local model server (Ollama, LM Studio, ...): it gets condensed skills, a smaller
+# reply limit, the longer local chat timeout and no key requirement. Mirrored by isLocalUrl() in
+# frontend/src/api/client.js; keep the two in step.
+_LOCAL_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",   # private and link-local IPv4
+    "fc00::/7", "fe80::/10"))                                              # unique-local and link-local IPv6
+# Only 127.0.0.1 and ::1 of the loopback range: the browser tests use 127.0.0.2 as a stand-in cloud provider.
+_LOOPBACK = (ipaddress.ip_address("127.0.0.1"), ipaddress.ip_address("::1"))
+_LOCAL_SUFFIXES = (".local", ".lan", ".internal", ".home.arpa", ".localhost")   # .internal covers host.docker.internal
+_LOCAL_PORTS = (11434, 1234)                                                     # Ollama, LM Studio defaults
+
+
+def _cloud_hosts() -> set:
+    """Hosts of the built-in cloud presets: never local, whatever the port."""
+    hosts = set()
+    for p in PROVIDER_PRESETS:
+        for u in [p["base_url"]] + [r["base_url"] for r in p.get("regions", [])]:
+            h = (urlparse(u).hostname or "").lower()
+            if h and p.get("needs_key", True):
+                hosts.add(h)
+    return hosts
+
+
+def is_local_url(url: str) -> bool:
+    """True when `url` points at a model server on this machine, the LAN or Docker: localhost,
+    127.0.0.1 / ::1, a private or link-local IP address, host.docker.internal, a *.local / *.lan /
+    *.internal / *.home.arpa name, a single-label host name (no dot, e.g. a Docker service "ollama"),
+    or Ollama's / LM Studio's default port (11434 / 1234) on any host that is not a built-in cloud
+    provider. Public names and public IP addresses are cloud. Ignores per-connection overrides
+    (see _is_local)."""
+    try:
+        parts = urlparse((url or "").strip())
+        host = (parts.hostname or "").lower().rstrip(".")
+        port = parts.port
+    except ValueError:                       # malformed URL or port
+        return False
+    if not host or parts.scheme.lower() not in ("http", "https"):
+        return False
+    if host == "localhost" or host.endswith(_LOCAL_SUFFIXES):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if ip in _LOOPBACK or any(ip in n for n in _LOCAL_NETS if n.version == ip.version):
+            return True
+    elif "." not in host:
+        return True                          # single-label name: resolvable only on the LAN / in Docker
+    return port in _LOCAL_PORTS and host not in _cloud_hosts()
+
+
+def _local_override(url: str) -> Optional[bool]:
+    """A saved connection's "local": true/false for this URL (config.json only, not in the UI)."""
+    want = (url or "").strip().rstrip("/")
+    if not want:
+        return None
+    recs = _load_avio_config().get("connections")
+    for c in recs if isinstance(recs, list) else []:
+        if (isinstance(c, dict) and isinstance(c.get("local"), bool)
+                and (c.get("base_url") or "").strip().rstrip("/") == want):
+            return c["local"]
+    return None
+
+
 def _is_local(url: str) -> bool:
-    return any(h in (url or "") for h in ("localhost", "127.0.0.1", "[::1]"))
+    """is_local_url(), unless a saved connection with this URL sets "local" in config.json."""
+    override = _local_override(url)
+    return is_local_url(url) if override is None else override
 
 
 def is_local_provider() -> bool:

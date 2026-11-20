@@ -67,7 +67,8 @@ SKILL_FILES: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 def _load_skills_config() -> dict:
-    """Return the skills-related keys from ~/.avio_config.json."""
+    """Return the skills-related keys from ~/.avio_config.json. A legacy "custom_skills" key is
+    ignored: skills are added in Settings -> Skills (folders under USER_SKILLS)."""
     try:
         if CONFIG_PATH.exists():
             raw = json.loads(CONFIG_PATH.read_text())
@@ -76,7 +77,6 @@ def _load_skills_config() -> dict:
                 "source":        raw.get("skills_source",  "bundled"),
                 "path":          raw.get("skills_path",    None),
                 "url":           raw.get("skills_url",     None),
-                "custom_skills": raw.get("custom_skills",  []),
                 # "relevant" (default) or "all": which added skills get injected
                 "inject":        raw.get("skills_inject",  "relevant"),
                 # characters of skill text sent to local models; 0 = none, -1 = no limit
@@ -85,7 +85,7 @@ def _load_skills_config() -> dict:
     except Exception as e:
         log.debug("sf_skills: could not read config — %s", e)
     return {"enabled": True, "source": "bundled", "path": None, "url": None,
-            "custom_skills": [], "inject": "relevant", "local_budget": LOCAL_SKILL_BUDGET}
+            "inject": "relevant", "local_budget": LOCAL_SKILL_BUDGET}
 
 
 def _resolve_skills_root(cfg: dict) -> Optional[Path]:
@@ -129,22 +129,41 @@ def _effective_base_url(cfg: dict) -> str:
 # ---------------------------------------------------------------------------
 # Intent detection  — keyword sets that trigger each skill
 # ---------------------------------------------------------------------------
+# Matched against the user's last few messages only (never forced on plain chat: skills cost tokens).
+# Plain English such as "query" or "select" alone does not count; a bare "trigger" still does (it is
+# also an Apex keyword), so "trigger a deploy" adds the Apex skill: an accepted false positive.
+_SOBJECT_WORD = (
+    r"(?:s?objects?|records?|fields?|salesforce|org|accounts?|contacts?|opportunit(?:y|ies)|leads?|"
+    r"cases?|users?|tasks?|events?|campaigns?|products?|pricebooks?|price\s+books?|quotes?|"
+    r"contracts?|assets?|opportunitylineitems?|\w+__(?:c|r|mdt|e|x|b)s?)"
+)
 _SOQL_RE = re.compile(
-    r"\b(soql|select\s+\w|query|queries|where\s+clause|governor.limit|"
-    r"relationship.quer|aggregate|count\s*\(|sosl|query.plan|"
-    r"index|selectiv|bulk\s+quer|anti.pattern|from\s+account|"
-    r"from\s+contact|from\s+opportunity|from\s+case|from\s+lead|"
-    r"from\s+\w+__c|order\s+by|limit\s+\d|subquery)\b",
+    r"\b(?:soql|sosl|"
+    # SELECT ... FROM: a field list (comma, dot path, Id/Name, a function) or a known object after FROM
+    r"select\s+(?:[\w.]+(?:\s*,\s*[\w.()]+)+|[\w.]*(?:id|name)|\w+__[cr]|count\s*\(\s*\w*\s*\))\s+from\s+\w+|"
+    r"select\s+[\w.(),\s]{1,200}?\s+from\s+" + _SOBJECT_WORD + r"|"
+    r"from\s+(?:account|contact|opportunity|case|lead|\w+__c)\b|"
+    # "query" near an sObject-ish word, either order
+    r"(?:quer(?:y|ies|ying)|look\s*up)\W+(?:\w+\W+){0,4}?" + _SOBJECT_WORD + r"|"
+    + _SOBJECT_WORD + r"\W+(?:\w+\W+){0,3}?quer(?:y|ies)|"
+    r"group\s+by|having\s+count|aggregate\s*(?:quer\w*|functions?|results?)|aggregateresult|count\s*\(\s*(?:id)?\s*\)|"
+    r"relationship\s+quer\w*|parent.to.child|child.to.parent|sub.?quer(?:y|ies)|semi.?joins?|anti.?joins?|"
+    r"query\s+plan|selective\s+quer\w*|selectivity|bulk\s+quer\w*|where\s+clause|governor.limits?|"
+    r"database\.query|database\.getquerylocator|\[\s*select\b)",
     re.IGNORECASE,
 )
 
 _APEX_RE = re.compile(
-    r"\.cls\b|(?<!\w)(apex|trigger|batch\s+apex|queueable|schedulable|"
-    r"invocable|aura.enabled|rest.resource|soql.inside.loop|"
-    r"bulkif|with.sharing|without.sharing|database\.(insert|update|delete)|"
-    r"dml\s+statement|future\s+method|platform.event|apex.class|"
-    r"apex.trigger|selector\s+class|service\s+class|domain\s+class|"
-    r"test\s+class(es)?|unit\s+tests?|@?istest|code\s+coverage|"
+    r"\.cls\b|(?<!\w)(apex|trigger|triggers|batch\s+apex|batchable|database\.batchable|queueable|schedulable|"
+    r"invocable|invocablemethod|aura.?enabled|rest.?resource|soql.inside.loop|"
+    r"bulkif\w*|with.sharing|without.sharing|inherited.sharing|database\.(?:insert|update|upsert|delete|query)|"
+    r"dml(?:\s+statements?|\s+operations?)?|future\s+methods?|@future|platform.event|apex.class|"
+    r"apex.trigger|trigger\s+handler|selector\s+(?:class|layer)|service\s+(?:class|layer)|domain\s+(?:class|layer)|"
+    r"governor\s+limits?|system\.enqueuejob|test\.(?:starttest|stoptest)|system\.assert\w*|"
+    r"(?:public|private|global)\s+(?:with\s+sharing\s+|without\s+sharing\s+|virtual\s+|abstract\s+)*class\s+\w+|"
+    r"class\s+\w+\s+(?:extends\s+\w+\s+)?implements\s+[\w.]+|"
+    r"before\s+(?:insert|update|delete)|after\s+(?:insert|update|delete|undelete)|"
+    r"test\s+class(es)?|test\s+methods?|unit\s+tests?|@?istest|code\s+coverage|"
     r"test\s+data\s+factory|testdatafactory|debug\s+logs?)(?!\w)",
     re.IGNORECASE,
 )
@@ -321,85 +340,6 @@ def _read_linked_asset(skill_dir: Path, rel: str) -> Optional[str]:
     except Exception:
         return None
     return text if text.strip() and len(text) <= _MAX_ASSET_CHARS else None
-
-
-# ---------------------------------------------------------------------------
-# Custom skill helpers
-# ---------------------------------------------------------------------------
-
-_GH_RAW_BASE = GH_RAW_BASE
-
-def _load_custom_skill_context(entry: dict) -> Optional[str]:
-    """
-    Load all markdown files for a custom skill entry.
-    entry = {"name": "...", "path": "/abs/path/to/skill-dir"}
-           or {"name": "...", "path": "https://raw.githubusercontent.com/..."}
-           or {"name": "...", "path": "file:///local/path/to/skill-dir"}
-
-    For HTTP(S) paths: fetches SKILL.md and known reference files from the URL base.
-    For local paths (including file:// URLs): reads from the filesystem.
-    Returns a formatted markdown block or None if the source is inaccessible.
-    """
-    raw_path = (entry.get("path") or "").strip()
-    if not raw_path:
-        return None
-
-    name = entry.get("name") or raw_path.rstrip("/").split("/")[-1]
-
-    # ── HTTP(S) source ────────────────────────────────────────────────────────
-    if raw_path.startswith("http://") or raw_path.startswith("https://"):
-        base_url = raw_path.rstrip("/")
-        # SKILL.md first, then the reference files it links to (plus common names)
-        skill_md = _load_file_url(base_url, "SKILL.md")
-        parts = [skill_md] if skill_md else []
-        for rel in _candidate_ref_paths(skill_md):
-            content = _load_file_url(base_url, rel)
-            if content and (_is_markdown(rel) or len(content) <= _MAX_ASSET_CHARS):
-                parts.append(content if _is_markdown(rel) else _asset_block(rel, content))
-        if not parts:
-            log.warning("sf_skills: custom skill URL returned no content: %s", base_url)
-            return None
-        return f"## {name} (custom)\n\n" + "\n\n---\n\n".join(parts)
-
-    # ── bundled: sentinel → resolve to SKILLS_DIR/slug ───────────────────────
-    if raw_path.startswith("bundled:"):
-        slug = raw_path[len("bundled:"):]
-        raw_path = str(SKILLS_DIR / slug)
-
-    # ── file:// URL → strip scheme ────────────────────────────────────────────
-    if raw_path.startswith("file://"):
-        raw_path = raw_path[7:]
-
-    # ── Local filesystem ──────────────────────────────────────────────────────
-    root = Path(raw_path).expanduser()
-    if not root.is_dir():
-        log.warning("sf_skills: custom skill path not found: %s", root)
-        return None
-
-    parts = []
-    skill_md = root / "SKILL.md"
-    if skill_md.exists():
-        content = _load_file_local(root, "SKILL.md")
-        if content:
-            parts.append(content)
-    for md in sorted(root.rglob("*.md")):
-        if md == skill_md:
-            continue
-        try:
-            content = md.read_text(encoding="utf-8")
-            content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()
-            if content:
-                parts.append(content)
-        except Exception as e:
-            log.debug("sf_skills: custom skill read error %s — %s", md, e)
-    for rel in _linked_paths(parts[0] if parts and skill_md.exists() else ""):
-        asset = None if _is_markdown(rel) else _read_linked_asset(root, rel)
-        if asset:
-            parts.append(_asset_block(rel, asset))
-
-    if not parts:
-        return None
-    return f"## {name} (custom)\n\n" + "\n\n---\n\n".join(parts)
 
 
 def fetch_skill(name: str, source: str) -> dict:

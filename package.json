@@ -1,6 +1,6 @@
 {
   "name": "avio",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Avio — Salesforce Metadata Explorer (Tauri + React + FastAPI)",
   "scripts": {
     "dev":            "concurrently \"npm run dev:backend\" \"npm run tauri:dev\"",
@@ -10,7 +10,10 @@
     "tauri:build":    "npm run build:backend && tauri build",
     "build:frontend": "cd frontend && npm run build",
     "build:backend":  "node scripts/venv-run.mjs pyinstaller sf_backend.spec --distpath dist --clean",
-    "postinstall":    "cd frontend && npm install"
+    "postinstall":    "cd frontend && npm install",
+    "test":           "node scripts/run-tests.mjs",
+    "test:e2e":       "node scripts/run-tests.mjs --e2e",
+    "test:packaged":  "node scripts/run-tests.mjs --packaged"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

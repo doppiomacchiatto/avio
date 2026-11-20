@@ -46,5 +46,5 @@ export function useConnectionChoice(panel) {
     try { id ? localStorage.setItem(storageKey(panel), id) : localStorage.removeItem(storageKey(panel)); } catch { /* storage unavailable */ }
   }, [panel]);
   const active = data.connections.find((c) => c.id === (selected || data.default));
-  return { connections: data.connections, defaultId: data.default, selected, choose, isLocal: isLocalUrl(active?.base_url) };
+  return { connections: data.connections, defaultId: data.default, selected, choose, isLocal: typeof active?.local === "boolean" ? active.local : isLocalUrl(active?.base_url) };
 }
