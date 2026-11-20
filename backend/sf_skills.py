@@ -129,22 +129,41 @@ def _effective_base_url(cfg: dict) -> str:
 # ---------------------------------------------------------------------------
 # Intent detection  — keyword sets that trigger each skill
 # ---------------------------------------------------------------------------
+# Matched against the user's last few messages only (never forced on plain chat: skills cost tokens).
+# Plain English such as "query" or "select" alone does not count; a bare "trigger" still does (it is
+# also an Apex keyword), so "trigger a deploy" adds the Apex skill: an accepted false positive.
+_SOBJECT_WORD = (
+    r"(?:s?objects?|records?|fields?|salesforce|org|accounts?|contacts?|opportunit(?:y|ies)|leads?|"
+    r"cases?|users?|tasks?|events?|campaigns?|products?|pricebooks?|price\s+books?|quotes?|"
+    r"contracts?|assets?|opportunitylineitems?|\w+__(?:c|r|mdt|e|x|b)s?)"
+)
 _SOQL_RE = re.compile(
-    r"\b(soql|select\s+\w|query|queries|where\s+clause|governor.limit|"
-    r"relationship.quer|aggregate|count\s*\(|sosl|query.plan|"
-    r"index|selectiv|bulk\s+quer|anti.pattern|from\s+account|"
-    r"from\s+contact|from\s+opportunity|from\s+case|from\s+lead|"
-    r"from\s+\w+__c|order\s+by|limit\s+\d|subquery)\b",
+    r"\b(?:soql|sosl|"
+    # SELECT ... FROM: a field list (comma, dot path, Id/Name, a function) or a known object after FROM
+    r"select\s+(?:[\w.]+(?:\s*,\s*[\w.()]+)+|[\w.]*(?:id|name)|\w+__[cr]|count\s*\(\s*\w*\s*\))\s+from\s+\w+|"
+    r"select\s+[\w.(),\s]{1,200}?\s+from\s+" + _SOBJECT_WORD + r"|"
+    r"from\s+(?:account|contact|opportunity|case|lead|\w+__c)\b|"
+    # "query" near an sObject-ish word, either order
+    r"(?:quer(?:y|ies|ying)|look\s*up)\W+(?:\w+\W+){0,4}?" + _SOBJECT_WORD + r"|"
+    + _SOBJECT_WORD + r"\W+(?:\w+\W+){0,3}?quer(?:y|ies)|"
+    r"group\s+by|having\s+count|aggregate\s*(?:quer\w*|functions?|results?)|aggregateresult|count\s*\(\s*(?:id)?\s*\)|"
+    r"relationship\s+quer\w*|parent.to.child|child.to.parent|sub.?quer(?:y|ies)|semi.?joins?|anti.?joins?|"
+    r"query\s+plan|selective\s+quer\w*|selectivity|bulk\s+quer\w*|where\s+clause|governor.limits?|"
+    r"database\.query|database\.getquerylocator|\[\s*select\b)",
     re.IGNORECASE,
 )
 
 _APEX_RE = re.compile(
-    r"\.cls\b|(?<!\w)(apex|trigger|batch\s+apex|queueable|schedulable|"
-    r"invocable|aura.enabled|rest.resource|soql.inside.loop|"
-    r"bulkif|with.sharing|without.sharing|database\.(insert|update|delete)|"
-    r"dml\s+statement|future\s+method|platform.event|apex.class|"
-    r"apex.trigger|selector\s+class|service\s+class|domain\s+class|"
-    r"test\s+class(es)?|unit\s+tests?|@?istest|code\s+coverage|"
+    r"\.cls\b|(?<!\w)(apex|trigger|triggers|batch\s+apex|batchable|database\.batchable|queueable|schedulable|"
+    r"invocable|invocablemethod|aura.?enabled|rest.?resource|soql.inside.loop|"
+    r"bulkif\w*|with.sharing|without.sharing|inherited.sharing|database\.(?:insert|update|upsert|delete|query)|"
+    r"dml(?:\s+statements?|\s+operations?)?|future\s+methods?|@future|platform.event|apex.class|"
+    r"apex.trigger|trigger\s+handler|selector\s+(?:class|layer)|service\s+(?:class|layer)|domain\s+(?:class|layer)|"
+    r"governor\s+limits?|system\.enqueuejob|test\.(?:starttest|stoptest)|system\.assert\w*|"
+    r"(?:public|private|global)\s+(?:with\s+sharing\s+|without\s+sharing\s+|virtual\s+|abstract\s+)*class\s+\w+|"
+    r"class\s+\w+\s+(?:extends\s+\w+\s+)?implements\s+[\w.]+|"
+    r"before\s+(?:insert|update|delete)|after\s+(?:insert|update|delete|undelete)|"
+    r"test\s+class(es)?|test\s+methods?|unit\s+tests?|@?istest|code\s+coverage|"
     r"test\s+data\s+factory|testdatafactory|debug\s+logs?)(?!\w)",
     re.IGNORECASE,
 )

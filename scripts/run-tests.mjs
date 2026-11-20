@@ -27,7 +27,7 @@ if (!fs.existsSync(PY)) { console.error(`Python not found: ${PY} (create backend
 const ENV = { ...process.env, PYTHONIOENCODING: "utf-8", AVIO_TEST_PYTHON: PY };
 
 const BACKEND = ["test_connections", "test_backend", "test_skills", "test_errors", "test_workspace",
-  "test_orglogin", "test_chats", "test_stop", "test_context_guard", "test_local_detection"].map((n) => ["backend", n + ".py"]);
+  "test_orglogin", "test_chats", "test_stop", "test_context_guard", "test_local_detection", "test_skill_detection"].map((n) => ["backend", n + ".py"]);
 const FRONTEND = ["test_blocks", "test_chatsystem", "test_session", "test_chathistory", "test_strip_ssr", "test_local_url"]
   .map((n) => ["frontend", n + ".mjs"]);
 

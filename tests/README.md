@@ -8,7 +8,7 @@ and exits non-zero on a crash. A suite has failed if any line starts with `FAIL`
 
 | Folder | What | Needs |
 |---|---|---|
-| `backend/` | Python suites for `backend/` (`test_*.py`): connections and keystore, AI client, skills, error messages, workspace models, org login, saved chats, Stop/timeout, context-size guard, local-server detection | `backend/.venv` |
+| `backend/` | Python suites for `backend/` (`test_*.py`): connections and keystore, AI client, skills, error messages, workspace models, org login, saved chats, Stop/timeout, context-size guard, local-server detection, skill detection phrases | `backend/.venv` |
 | `frontend/` | node suites for `frontend/src/` (`test_*.mjs`): block parser, chat system prompt, session store, chat history, history strip rendered through Vite, local-URL detection | `frontend/node_modules` |
 | `e2e/` | Playwright browser runs against the real backend and the real UI (`e2e_*.mjs`, `e2e.mjs`); `browser.mjs` finds Edge/Chrome; `harness/` + `vite.harness.config.mjs`: the test page for `e2e_stop.mjs` and `e2e.mjs` | servers, see below; `npm install` in `tests/e2e` (the runner does it) |
 | `fixtures/` | helpers the suites start: `fake_provider.py` (fake OpenAI-style provider, port 7898: 429 with `Retry-After`, mid-stream error, HTML 522), `fake_slow.py` (slow/silent provider, port 7889, logs closed connections to the file given as its argument), `stub_sf.py` + `stub_sf.cmd` (stand-in for the `sf` CLI), `local_urls.json` (URL -> local/cloud table shared by the backend and frontend local-detection suites) | |
