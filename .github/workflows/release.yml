@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: write        # create the release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Version
         id: version
@@ -50,7 +50,7 @@ jobs:
           }
           "version=$pkg" >> $env:GITHUB_OUTPUT
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -58,7 +58,7 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -105,7 +105,7 @@ jobs:
           } | Set-Content out/SHA256SUMS.txt -Encoding ascii
           Get-Content out/SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: avio-${{ steps.version.outputs.version }}-windows
           path: out/

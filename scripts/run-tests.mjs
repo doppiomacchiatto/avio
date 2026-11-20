@@ -32,6 +32,15 @@ const FRONTEND = ["test_blocks", "test_chatsystem", "test_session", "test_chathi
   .map((n) => ["frontend", n + ".mjs"]);
 
 const results = [];
+// On GitHub Actions, failures also go out as error annotations: they show on the run page and in the public
+// check-run API, where they can be read without access to the full log.
+const GHA = !!process.env.GITHUB_ACTIONS;
+const annotate = (title, msg) => { if (GHA) console.log(`::error title=${title}::${String(msg).slice(0, 900).replace(/%/g, "%25").replace(/\r?\n/g, "%0A")}`); };
+const setupFail = (msg, logsDir) => {
+  console.log(`FAIL  ${msg}`); results.push({ name: "e2e setup", ok: false }); annotate("e2e setup", msg);
+  if (GHA && logsDir) for (const f of fs.readdirSync(logsDir).filter((f) => f.endsWith(".log")))
+    annotate(`e2e ${f}`, fs.readFileSync(path.join(logsDir, f), "utf8").split(/\r?\n/).slice(-25).join("\n"));
+};
 function record(name, out, code) {
   const lines = out.split(/\r?\n/);
   const pass = lines.filter((l) => l.startsWith("PASS")).length;
@@ -39,7 +48,11 @@ function record(name, out, code) {
   const ok = fail === 0 && code === 0;
   results.push({ name, pass, fail, code, ok });
   console.log(`${ok ? "ok  " : "FAIL"}  ${name.padEnd(28)} ${String(pass).padStart(4)} passed, ${fail} failed${code ? `, exit ${code}` : ""}`);
-  if (!ok) for (const l of lines.filter((l) => /FAIL|\(BAD\)|Error|Traceback/.test(l)).slice(0, 15)) console.log("        " + l.slice(0, 300));
+  if (!ok) {
+    const bad = lines.filter((l) => /FAIL|\(BAD\)|Error|Traceback/.test(l)).slice(0, 15);
+    for (const l of bad) console.log("        " + l.slice(0, 300));
+    annotate(name, (bad.length ? bad : lines.slice(-15)).map((l) => l.slice(0, 200)).join("\n") || `exit ${code}`);
+  }
 }
 function run(name, cmd, cmdArgs, opts = {}) {
   if (only && !name.includes(only)) return;
@@ -68,7 +81,7 @@ async function e2e() {
     console.log("installing tests/e2e dependencies (playwright-core)...");
     spawnSync("npm install --no-audit --no-fund", { cwd: path.join(T, "e2e"), stdio: "inherit", shell: true });
   }
-  for (const p of [7893, 5199, 7889]) if (await portBusy(p)) { console.log(`FAIL  e2e: port ${p} is already in use; stop that server first`); results.push({ name: "e2e setup", ok: false }); return; }
+  for (const p of [7893, 5199, 7889]) if (await portBusy(p)) { setupFail(`e2e: port ${p} is already in use; stop that server first`); return; }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "avio-e2e-"));
   const appdata = path.join(tmp, "appdata");
   fs.mkdirSync(path.join(appdata, "Avio"), { recursive: true });
@@ -93,20 +106,20 @@ async function e2e() {
     start(PY, [path.join(T, "fixtures", "fake_slow.py"), closeLog], tmp, ENV, "fake_slow.log");
     const up = async (url) => { for (let i = 0; i < 120; i++) { try { await fetch(url, { signal: AbortSignal.timeout(1500) }); return true; } catch { await new Promise((r) => setTimeout(r, 500)); } } return false; };
     if (!(await up("http://127.0.0.1:7893/api/health")) || !(await up("http://localhost:5199/_harness/index.html"))) {
-      console.log(`FAIL  e2e: backend or vite did not start (logs in ${tmp})`); results.push({ name: "e2e setup", ok: false }); return;
+      setupFail(`e2e: backend or vite did not start (logs in ${tmp})`, tmp); return;
     }
     // e2e.mjs calls /api/chats/delete-all: make sure 7893 is the backend started above, on the temp APPDATA
     const chats = await (await fetch("http://127.0.0.1:7893/api/chats")).json();
-    if ((chats.chats || []).length) { console.log("FAIL  e2e: the backend on 7893 has saved chats: not the isolated one"); results.push({ name: "e2e setup", ok: false }); return; }
+    if ((chats.chats || []).length) { setupFail("e2e: the backend on 7893 has saved chats: not the isolated one"); return; }
     // and that what it saves lands in the temp APPDATA: save a probe chat, look for its file, delete it again
     const probe = await (await fetch("http://127.0.0.1:7893/api/chats", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ surface: "chat", messages: [{ role: "user", content: "e2e isolation probe" }] }) })).json();
     const chatsDir = path.join(appdata, "Avio", "chats");
     const isolated = fs.existsSync(chatsDir) && fs.readdirSync(chatsDir).length > 0;
     if (probe?.id) await fetch("http://127.0.0.1:7893/api/chats/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: probe.id }) });
-    if (!isolated) { console.log(`FAIL  e2e: the backend on 7893 does not write to the temp APPDATA (${appdata})`); results.push({ name: "e2e setup", ok: false }); return; }
+    if (!isolated) { setupFail(`e2e: the backend on 7893 does not write to the temp APPDATA (${appdata})`, tmp); return; }
     const harnessPage = await (await fetch("http://localhost:5199/_harness/index.html")).text();
-    if (!harnessPage.includes("Avio e2e harness")) { console.log("FAIL  e2e: vite on 5199 does not serve the harness page"); results.push({ name: "e2e setup", ok: false }); return; }
+    if (!harnessPage.includes("Avio e2e harness")) { setupFail("e2e: vite on 5199 does not serve the harness page", tmp); return; }
     run("e2e_switch.mjs", process.execPath, [path.join(T, "e2e", "e2e_switch.mjs"), closeLog], { cwd: path.join(T, "e2e") });
     run("e2e_panel.mjs", process.execPath, [path.join(T, "e2e", "e2e_panel.mjs")], { cwd: path.join(T, "e2e") });
     run("e2e_stop.mjs", process.execPath, [path.join(T, "e2e", "e2e_stop.mjs"), closeLog], { cwd: path.join(T, "e2e") });
