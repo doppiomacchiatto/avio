@@ -153,7 +153,6 @@ class SettingsRequest(BaseModel):
     skills_source:   Optional[str]  = None   # "bundled" | "path" | "url"
     skills_path:     Optional[str]  = None
     skills_url:      Optional[str]  = None
-    custom_skills:   Optional[list] = None   # [{name, path}]
 
 @app.get("/api/settings")
 def get_settings():
@@ -200,7 +199,6 @@ def get_settings():
         "skills_source":  cfg.get("skills_source",  "bundled"),
         "skills_path":    cfg.get("skills_path",    ""),
         "skills_url":     cfg.get("skills_url",     ""),
-        "custom_skills":  cfg.get("custom_skills",  []),
     }
 
 class ModelsRequest(BaseModel):
@@ -270,7 +268,6 @@ def post_settings(req: SettingsRequest):
         skills_source=req.skills_source,
         skills_path=req.skills_path,
         skills_url=req.skills_url,
-        custom_skills=req.custom_skills,
     )
     _ai.invalidate()
     return {"ok": True}

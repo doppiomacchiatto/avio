@@ -16,7 +16,7 @@ def check(name, ok, detail=""):
 # isolated added-skills folder + bundled built-ins, no network
 sf_skills.USER_SKILLS = pathlib.Path(tmp) / "skills"
 sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None,
-    "custom_skills": [], "inject": "relevant", "local_budget": sf_skills.LOCAL_SKILL_BUDGET}
+    "inject": "relevant", "local_budget": sf_skills.LOCAL_SKILL_BUDGET}
 def add(folder, name, body="RULES for " ):
     d = sf_skills.USER_SKILLS / folder; d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(body + folder, encoding="utf-8")
@@ -65,18 +65,18 @@ check("built-in name is a friendly label", n[0] == "Apex Generate", str(n))
 out, n = sf_skills.augment_with_skills("SYS", msg("hello"), APEX, local=True)
 check("local mode marks the built-in as condensed", n and n[0].endswith("(condensed)"), str(n))
 sf_skills._load_skills_config = lambda: {"enabled": False, "source": "bundled", "path": None, "url": None,
-    "custom_skills": [], "inject": "relevant", "local_budget": 6000}
+    "inject": "relevant", "local_budget": 6000}
 out, n = sf_skills.augment_with_skills("SYS", msg("apex test"), APEX)
 check("skills disabled -> unchanged and []", out == "SYS" and n == [], str(n))
 sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None,
-    "custom_skills": [], "inject": "relevant", "local_budget": 0}
+    "inject": "relevant", "local_budget": 0}
 out, n = sf_skills.augment_with_skills("SYS", msg("apex test"), APEX, local=True)
 check("local budget 0 -> unchanged and []", out == "SYS" and n == [], str(n))
 check("augment_system wrapper returns just the string", isinstance(sf_skills.augment_system("SYS", msg("x"), None), str))
 
 # names always match what is in the text
 sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None,
-    "custom_skills": [], "inject": "relevant", "local_budget": 6000}
+    "inject": "relevant", "local_budget": 6000}
 out, n = sf_skills.augment_with_skills("SYS", msg("write a test class"), APEX)
 check("every reported added skill is really in the text", all(("## " + x) in out for x in n if "(" not in x and x != "Apex Generate"), str(n))
 
@@ -224,7 +224,7 @@ sf_skills.USER_SKILLS = saved_user
 # ---- bundled Apex skill: linked templates are sent in cloud mode (fix 1) -------------------------
 import re as _re
 cfg_b = {"enabled": True, "source": "bundled", "path": None, "url": None,
-         "custom_skills": [], "inject": "relevant", "local_budget": 6000}
+         "inject": "relevant", "local_budget": 6000}
 apex_dir = sf_skills.SKILLS_DIR / "platform-apex-generate"
 svc = (apex_dir / "assets" / "service.cls").read_text(encoding="utf-8").strip()
 ctx_cloud = sf_skills.build_skill_context(APEX, cfg_b)

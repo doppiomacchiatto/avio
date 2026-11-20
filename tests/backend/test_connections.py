@@ -251,6 +251,23 @@ with TestClient(main.app) as tc:                       # context manager runs th
           s["default_connection"] == "claude" and len(s["connections"]) == 2 and s["model"] == "claude-haiku-5-5" and s["key_set"] and s["secret_storage"]["secure"] and s["key_source"] == "keystore")
     check("api: default endpoint 404 for unknown", tc.post("/api/ai/connections/default", json={"id": "ghost"}).status_code == 404)
 
+    # Legacy "custom_skills" key: never used (skills are added in Settings -> Skills), now ignored everywhere.
+    import sf_skills
+    legacy_dir = data_dir / "legacy-custom-skill"
+    legacy_dir.mkdir(exist_ok=True)
+    (legacy_dir / "SKILL.md").write_text("LEGACY-CUSTOM-SKILL-MARKER", encoding="utf-8")
+    cfg = json.loads(raw_config_text())
+    cfg["custom_skills"] = [{"name": "Legacy", "path": str(legacy_dir)}]
+    ai_client.CONFIG_PATH.write_text(json.dumps(cfg))
+    r = tc.post("/api/settings", json={"theme": "dark", "custom_skills": [{"name": "X", "path": "C:/x"}]})
+    check("api: an old client posting custom_skills still saves (key ignored)", r.status_code == 200 and json.loads(raw_config_text())["theme"] == "dark", r.text[:200])
+    check("api: posted custom_skills is not written", json.loads(raw_config_text())["custom_skills"] == [{"name": "Legacy", "path": str(legacy_dir)}])
+    check("api: /api/settings no longer returns custom_skills", "custom_skills" not in tc.get("/api/settings").json())
+    check("skills config: custom_skills is not read", "custom_skills" not in sf_skills._load_skills_config())
+    ctx, used = sf_skills.augment_with_skills("SYS", [{"role": "user", "content": "write a test class"}], None)
+    check("skills: a legacy custom_skills folder is never injected", "LEGACY-CUSTOM-SKILL-MARKER" not in ctx and "Legacy" not in " ".join(used), str(used))
+    check("skills: the dead loader is gone", not hasattr(sf_skills, "_load_custom_skill_context"))
+
     # models: uses the connection's stored key and URL, a typed key wins
     seen = {}
     real_fm = main.fetch_models

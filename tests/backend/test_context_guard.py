@@ -22,7 +22,7 @@ def err(status, message, code=None):
 # Skills: bundled, no added skills, no network.
 sf_skills.USER_SKILLS = __import__("pathlib").Path(tmp) / "skills"
 sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None,
-    "custom_skills": [], "inject": "relevant", "local_budget": sf_skills.LOCAL_SKILL_BUDGET}
+    "inject": "relevant", "local_budget": sf_skills.LOCAL_SKILL_BUDGET}
 cfg = {}
 ai_client._load_avio_config = lambda: dict(cfg)
 

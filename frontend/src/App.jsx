@@ -223,7 +223,7 @@ export default function App() {
   }, [theme]);
 
   const [settingsOpen,  setSettingsOpen]  = useState(false);
-  const [settingsDraft, setSettingsDraft] = useState({ api_key: "", model: "", base_url: "", theme: "system", skills_enabled: true, skills_source: "bundled", skills_path: "", skills_url: "", custom_skills: [] });
+  const [settingsDraft, setSettingsDraft] = useState({ api_key: "", model: "", base_url: "", theme: "system", skills_enabled: true, skills_source: "bundled", skills_path: "", skills_url: "" });
   const [skillsTest,    setSkillsTest]    = useState(null);   // null | "testing" | { ok, msg, skills, version }
   const [addSkillPath,     setAddSkillPath]     = useState("");      // draft path for custom skill
   const [addSkillName,     setAddSkillName]     = useState("");      // draft name label for custom skill
@@ -258,7 +258,6 @@ export default function App() {
         skills_source:  d.skills_source  || "bundled",
         skills_path:    d.skills_path    || "",
         skills_url:     d.skills_url     || "",
-        custom_skills:  d.custom_skills  || [],
       });
       setAvailModels(d.models || []);
       setProviders(d.providers || []);
@@ -477,7 +476,6 @@ export default function App() {
           skills_source:  settingsDraft.skills_source,
           skills_path:    settingsDraft.skills_path,
           skills_url:     settingsDraft.skills_url,
-          custom_skills:  settingsDraft.custom_skills,
         }),
       });
       // Apply theme immediately on save

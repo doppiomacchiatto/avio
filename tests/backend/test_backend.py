@@ -157,12 +157,12 @@ both = sf_skills.augment_system("SYS", [{"role": "user", "content": "write a soq
 check("local: two skills share the budget (<9k chars)", "platform-apex-generate" in both and "platform-soql-query" in both and len(both) < 9000, str(len(both)))
 
 # config-driven budgets
-sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None, "custom_skills": [], "inject": "relevant", "local_budget": 0}
+sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None, "inject": "relevant", "local_budget": 0}
 check("skills_local_budget=0: no skills for local models", sf_skills.augment_system("SYS", msgs, ["platform-apex-generate"], local=True) == "SYS")
 check("skills_local_budget=0: cloud unaffected", len(sf_skills.augment_system("SYS", msgs, ["platform-apex-generate"], local=False)) > 20000)
-sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None, "custom_skills": [], "inject": "relevant", "local_budget": -1}
+sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None, "inject": "relevant", "local_budget": -1}
 check("skills_local_budget=-1: local gets the full skill", len(sf_skills.augment_system("SYS", msgs, ["platform-apex-generate"], local=True)) > 20000)
-sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None, "custom_skills": [], "inject": "relevant", "local_budget": "garbage"}
+sf_skills._load_skills_config = lambda: {"enabled": True, "source": "bundled", "path": None, "url": None, "inject": "relevant", "local_budget": "garbage"}
 check("skills_local_budget garbage -> default", 3000 < len(sf_skills.augment_system("SYS", msgs, ["platform-apex-generate"], local=True)) < 9000)
 
 print("\nfailures:", fails)

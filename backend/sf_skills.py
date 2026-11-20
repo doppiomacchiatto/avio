@@ -67,7 +67,8 @@ SKILL_FILES: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 def _load_skills_config() -> dict:
-    """Return the skills-related keys from ~/.avio_config.json."""
+    """Return the skills-related keys from ~/.avio_config.json. A legacy "custom_skills" key is
+    ignored: skills are added in Settings -> Skills (folders under USER_SKILLS)."""
     try:
         if CONFIG_PATH.exists():
             raw = json.loads(CONFIG_PATH.read_text())
@@ -76,7 +77,6 @@ def _load_skills_config() -> dict:
                 "source":        raw.get("skills_source",  "bundled"),
                 "path":          raw.get("skills_path",    None),
                 "url":           raw.get("skills_url",     None),
-                "custom_skills": raw.get("custom_skills",  []),
                 # "relevant" (default) or "all": which added skills get injected
                 "inject":        raw.get("skills_inject",  "relevant"),
                 # characters of skill text sent to local models; 0 = none, -1 = no limit
@@ -85,7 +85,7 @@ def _load_skills_config() -> dict:
     except Exception as e:
         log.debug("sf_skills: could not read config — %s", e)
     return {"enabled": True, "source": "bundled", "path": None, "url": None,
-            "custom_skills": [], "inject": "relevant", "local_budget": LOCAL_SKILL_BUDGET}
+            "inject": "relevant", "local_budget": LOCAL_SKILL_BUDGET}
 
 
 def _resolve_skills_root(cfg: dict) -> Optional[Path]:
@@ -340,85 +340,6 @@ def _read_linked_asset(skill_dir: Path, rel: str) -> Optional[str]:
     except Exception:
         return None
     return text if text.strip() and len(text) <= _MAX_ASSET_CHARS else None
-
-
-# ---------------------------------------------------------------------------
-# Custom skill helpers
-# ---------------------------------------------------------------------------
-
-_GH_RAW_BASE = GH_RAW_BASE
-
-def _load_custom_skill_context(entry: dict) -> Optional[str]:
-    """
-    Load all markdown files for a custom skill entry.
-    entry = {"name": "...", "path": "/abs/path/to/skill-dir"}
-           or {"name": "...", "path": "https://raw.githubusercontent.com/..."}
-           or {"name": "...", "path": "file:///local/path/to/skill-dir"}
-
-    For HTTP(S) paths: fetches SKILL.md and known reference files from the URL base.
-    For local paths (including file:// URLs): reads from the filesystem.
-    Returns a formatted markdown block or None if the source is inaccessible.
-    """
-    raw_path = (entry.get("path") or "").strip()
-    if not raw_path:
-        return None
-
-    name = entry.get("name") or raw_path.rstrip("/").split("/")[-1]
-
-    # ── HTTP(S) source ────────────────────────────────────────────────────────
-    if raw_path.startswith("http://") or raw_path.startswith("https://"):
-        base_url = raw_path.rstrip("/")
-        # SKILL.md first, then the reference files it links to (plus common names)
-        skill_md = _load_file_url(base_url, "SKILL.md")
-        parts = [skill_md] if skill_md else []
-        for rel in _candidate_ref_paths(skill_md):
-            content = _load_file_url(base_url, rel)
-            if content and (_is_markdown(rel) or len(content) <= _MAX_ASSET_CHARS):
-                parts.append(content if _is_markdown(rel) else _asset_block(rel, content))
-        if not parts:
-            log.warning("sf_skills: custom skill URL returned no content: %s", base_url)
-            return None
-        return f"## {name} (custom)\n\n" + "\n\n---\n\n".join(parts)
-
-    # ── bundled: sentinel → resolve to SKILLS_DIR/slug ───────────────────────
-    if raw_path.startswith("bundled:"):
-        slug = raw_path[len("bundled:"):]
-        raw_path = str(SKILLS_DIR / slug)
-
-    # ── file:// URL → strip scheme ────────────────────────────────────────────
-    if raw_path.startswith("file://"):
-        raw_path = raw_path[7:]
-
-    # ── Local filesystem ──────────────────────────────────────────────────────
-    root = Path(raw_path).expanduser()
-    if not root.is_dir():
-        log.warning("sf_skills: custom skill path not found: %s", root)
-        return None
-
-    parts = []
-    skill_md = root / "SKILL.md"
-    if skill_md.exists():
-        content = _load_file_local(root, "SKILL.md")
-        if content:
-            parts.append(content)
-    for md in sorted(root.rglob("*.md")):
-        if md == skill_md:
-            continue
-        try:
-            content = md.read_text(encoding="utf-8")
-            content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()
-            if content:
-                parts.append(content)
-        except Exception as e:
-            log.debug("sf_skills: custom skill read error %s — %s", md, e)
-    for rel in _linked_paths(parts[0] if parts and skill_md.exists() else ""):
-        asset = None if _is_markdown(rel) else _read_linked_asset(root, rel)
-        if asset:
-            parts.append(_asset_block(rel, asset))
-
-    if not parts:
-        return None
-    return f"## {name} (custom)\n\n" + "\n\n---\n\n".join(parts)
 
 
 def fetch_skill(name: str, source: str) -> dict:
