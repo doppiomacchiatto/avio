@@ -35,7 +35,7 @@ from sf_cli import _sf as _sf_raw   # for raw SOQL
 import vr_snapshot
 from excel_builder import build_excel
 from query_history import _qh_save, _qh_load
-from ai_client import AIClient, StreamFinish, describe_error, model_context_length, estimate_tokens, load_max_tokens, is_context_length_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH
+from ai_client import AIClient, StreamFinish, describe_error, model_context_length, estimate_tokens, load_max_tokens, is_context_length_error, same_key_scope, PROVIDER_PRESETS, fetch_models, needs_key, save_config, has_dev_override, _load_avio_config as _load_config, _load_api_key, _load_base_url, _load_legacy_config, API_KEY_PATH, _is_local
 import chat_store
 import connections
 import org_login
@@ -248,7 +248,7 @@ def _fallback_models(url: str) -> list:
         return [m for m in AVAILABLE_MODELS if re.match(r"(gpt-|o\d)", m["id"])]
     if "anthropic.com" in u:
         return [m for m in AVAILABLE_MODELS if m["id"].startswith("claude-")]
-    if any(h in u for h in ("localhost", "127.0.0.1", "[::1]")):
+    if _is_local(url):
         return []                       # a local server's models are whatever you pulled
     return AVAILABLE_MODELS
 

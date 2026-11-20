@@ -8,10 +8,10 @@ and exits non-zero on a crash. A suite has failed if any line starts with `FAIL`
 
 | Folder | What | Needs |
 |---|---|---|
-| `backend/` | Python suites for `backend/` (`test_*.py`): connections and keystore, AI client, skills, error messages, workspace models, org login, saved chats, Stop/timeout, context-size guard | `backend/.venv` |
-| `frontend/` | node suites for `frontend/src/` (`test_*.mjs`): block parser, chat system prompt, session store, chat history, history strip rendered through Vite | `frontend/node_modules` |
+| `backend/` | Python suites for `backend/` (`test_*.py`): connections and keystore, AI client, skills, error messages, workspace models, org login, saved chats, Stop/timeout, context-size guard, local-server detection | `backend/.venv` |
+| `frontend/` | node suites for `frontend/src/` (`test_*.mjs`): block parser, chat system prompt, session store, chat history, history strip rendered through Vite, local-URL detection | `frontend/node_modules` |
 | `e2e/` | Playwright browser runs against the real backend and the real UI (`e2e_*.mjs`, `e2e.mjs`); `browser.mjs` finds Edge/Chrome; `harness/` + `vite.harness.config.mjs`: the test page for `e2e_stop.mjs` and `e2e.mjs` | servers, see below; `npm install` in `tests/e2e` (the runner does it) |
-| `fixtures/` | helpers the suites start: `fake_provider.py` (fake OpenAI-style provider, port 7898: 429 with `Retry-After`, mid-stream error, HTML 522), `fake_slow.py` (slow/silent provider, port 7889, logs closed connections to the file given as its argument), `stub_sf.py` + `stub_sf.cmd` (stand-in for the `sf` CLI) | |
+| `fixtures/` | helpers the suites start: `fake_provider.py` (fake OpenAI-style provider, port 7898: 429 with `Retry-After`, mid-stream error, HTML 522), `fake_slow.py` (slow/silent provider, port 7889, logs closed connections to the file given as its argument), `stub_sf.py` + `stub_sf.cmd` (stand-in for the `sf` CLI), `local_urls.json` (URL -> local/cloud table shared by the backend and frontend local-detection suites) | |
 | `packaged/` | checks of an installed release build: `frozen_verify.ps1`, `byte_scan.ps1` | Windows, an installed build |
 
 Backend suites put `backend/` on `sys.path` from the repo root (`Path(__file__).resolve().parents[2]`); frontend
@@ -41,7 +41,7 @@ The runner starts, and afterwards kills (process tree), three servers:
   Credential Manager) and **no** `AVIO_API_TOKEN`;
 - `npx vite --config ../tests/e2e/vite.harness.config.mjs` in `frontend/` (**5199**): the app's own Vite config
   plus the harness page (below);
-- `fixtures/fake_slow.py <close-log>` on **7889** (use `127.0.0.2` in a connection URL for a "cloud" provider; `127.0.0.1` counts as local).
+- `fixtures/fake_slow.py <close-log>` on **7889** (use `127.0.0.2` in a connection URL for a "cloud" provider; `127.0.0.1` counts as local, and only `127.0.0.1` of the loopback range does, see `is_local_url` in `backend/ai_client.py`).
 
 It refuses to start if any of those ports is taken, and before running checks that the backend on 7893 is the
 isolated one (no saved chats, and a probe chat it saves lands in the temp `APPDATA`; the scripts call

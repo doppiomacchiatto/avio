@@ -4,7 +4,7 @@ connections.py — saved AI provider "connections".
 A connection is a label, a provider preset, a base URL and a default model. Its API key is
 kept in the OS keystore (see secret_store.py), never in config.json:
 
-    config.json   "connections": [{"id", "label", "preset", "base_url", "model"}, ...]
+    config.json   "connections": [{"id", "label", "preset", "base_url", "model"[, "local"]}, ...]
                   "default_connection": "<id>"
     keystore      service "Avio", account "connection-<id>"
 
@@ -77,6 +77,7 @@ def _public(c: dict) -> dict:
         "key_set": bool(key),
         "key_hint": ("…" + key[-4:]) if key and len(key) >= 8 else ("set" if key else ""),
         "requires_key": not _is_local(base_url),
+        "local": _is_local(base_url),    # condensed skills, local timeout; follows a "local" override
     }
 
 

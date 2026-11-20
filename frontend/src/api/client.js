@@ -233,10 +233,8 @@ export async function apiStream(path, body, onDelta, onDone, onError, onTruncate
   }
 }
 
-// True for a local model server (Ollama, LM Studio, ...), which usually has a small context window.
-export function isLocalUrl(url) {
-  return /(^|\/\/)(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(String(url || "").trim());
-}
+// isLocalUrl lives in its own module so the node tests can import it without the Tauri imports.
+export { isLocalUrl } from "./localUrl.js";
 
 // window.__TAURI__ only exists when app.withGlobalTauri is true (it is not), so
 // check __TAURI_INTERNALS__, which Tauri v2 always injects.

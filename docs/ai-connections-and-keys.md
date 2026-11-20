@@ -104,6 +104,7 @@ No key is needed. Choose **Ollama (local Llama)**, or enter your server's URL (f
 
 - Local models usually run with a small context window (Ollama defaults to 4,096 tokens), so Avio sends them a condensed version of its Salesforce guidance. See the README for the `skills_local_budget` setting.
 - The first request can take a minute or two while the model loads.
+- Avio treats a server as local when its URL is on this machine (`localhost`, `127.0.0.1`), on your network or in Docker (a private address such as `192.168.x.x` or `10.x.x.x`, `host.docker.internal`, a `.local`/`.lan`/`.internal`/`.home.arpa` name or a name without a dot), or on Ollama's or LM Studio's default port (`11434`, `1234`) of any host that is not a built-in cloud provider. Local means the condensed guidance, the 4,096-token reply limit, the 15-minute timeout and no key. If Avio guesses wrong, add `"local": true` (or `false`) to that connection's entry under `"connections"` in `config.json`.
 
 ### Several connections for one provider
 
@@ -245,6 +246,7 @@ These are for developers and scripted setups. Normal use never needs them.
 | `OPENCODE_API_KEY`, `OPENCODE_BASE_URL`, `OPENCODE_MODEL` | environment variables | Override the **default** connection's key, URL and model for this run. Nothing is saved. |
 | `opencode.config.json` | project root (git-ignored; copy `opencode.config.example.json`) | Same overrides from a file; only applies when running from source. |
 | `max_tokens` / `OPENCODE_MAX_TOKENS` | `config.json` / environment | Reply token limit (default 16,384 cloud, 4,096 local). |
+| `"local": true` / `false` on a connection | `config.json` (`"connections"` entry) | Forces that connection to count as a local model server or as a cloud provider, overriding the URL rule (see "Local models"). |
 | `skills_local_budget` | `config.json` | Characters of Salesforce guidance sent to local models (`0` none, `-1` everything). |
 | `skills_context_guard` | `config.json` | `true` (default): condense or leave out the Salesforce guidance when it would not fit the model's context window. `false`: always send it in full. |
 | `chat_timeout_seconds` | `config.json` | How long a reply may stay completely silent before Avio stops waiting (10 to 3600). Default 300 (5 minutes) for cloud models and 900 (15 minutes) for local ones. |
