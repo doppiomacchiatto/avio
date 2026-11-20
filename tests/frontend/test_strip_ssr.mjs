@@ -1,0 +1,30 @@
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+const root = fileURLToPath(new URL("../../frontend/", import.meta.url));
+const req = createRequire(pathToFileURL(root + "x.js"));
+const React = req("react");
+const { renderToString } = req("react-dom/server");
+const { createServer } = req("vite");
+const server = await createServer({ root, server: { middlewareMode: true }, appType: "custom", logLevel: "error" });
+const Strip = (await server.ssrLoadModule("/src/components/AiHistoryStrip.jsx")).default;
+const S = await server.ssrLoadModule("/src/sessionStore.js");
+
+let fails = 0;
+const check = (name, ok, detail = "") => { if (!ok) fails++; console.log((ok ? "PASS " : "FAIL ") + name + (!ok && detail ? "  -- " + detail.slice(0, 300) : "")); };
+const html = (props) => renderToString(React.createElement(Strip, props));
+const text = (h) => h.replace(/<[^>]+>/g, "");
+
+let h = html({ surface: "apex" });
+check("renders Save and Load buttons", text(h).includes("Save") && text(h).includes("Load"), h);
+check("Save is disabled with no messages", /<button[^>]*disabled=""[^>]*>[^<]*Save to file<\/button>/.test(h), h);
+check("Load is enabled when not busy", !/<button[^>]*disabled=""[^>]*>[^<]*Load file<\/button>/.test(h));
+check("Load is disabled while a reply streams", /<button[^>]*disabled=""[^>]*>[^<]*Load file<\/button>/.test(html({ surface: "apex", busy: true })));
+S.setSession("apex.ai.messages", [{ role: "user", content: "hi" }]);
+h = html({ surface: "apex" });
+check("Save enabled once there are messages", !/<button[^>]*disabled=""[^>]*>[^<]*Save to file<\/button>/.test(h), h);
+check("auto variant renders for AI Chat with dark-mode classes", html({ surface: "chat", variant: "auto" }).includes("dark:bg-gray-800"));
+check("an unknown variant falls back to dark", html({ surface: "soql", variant: "nope" }).includes("bg-slate-800"));
+check("a hidden file input accepts json only", /type="file"[^>]*accept="\.json,application\/json"/.test(h) || /accept="\.json,application\/json"[^>]*type="file"/.test(h), h);
+await server.close();
+console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
+process.exit(fails ? 1 : 0);

@@ -32,3 +32,7 @@ src-tauri/target/
 .sf_tools_config.json
 # Developer override for the AI layer; copy opencode.config.example.json to create it
 opencode.config.json
+
+# Tests: personal strings for the byte scan (never commit), files the org-login stub may write
+tests/packaged/scan-strings.local.txt
+tests/fixtures/stub_*.txt
