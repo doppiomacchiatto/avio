@@ -72,10 +72,13 @@ for (const panel of ["chat", "soql", "apex"]) {
 
   // 2. send again after a Stop works, and can be stopped again
   await ask(page, panel, "second question");
-  await page.waitForFunction(() => document.body.innerText.includes("word2 "), null, { timeout: 15000 });
+  // the first (stopped) reply already contains "word2 ": wait for the second reply's own text, or Stop
+  // can land before any text has arrived and the reply gets no "Stopped by you" marker
+  await page.waitForFunction(() => (document.body.innerText.match(/word2 /g) || []).length >= 2, null, { timeout: 15000 });
   check(`${panel}: sending again after a Stop streams again`, await stopBtn(page).isVisible());
   await stopBtn(page).click();
-  await sleep(500);
+  // wait (up to 5 s) for the second "Stopped by you" marker instead of a fixed sleep
+  await page.waitForFunction(() => (document.body.innerText.match(/Stopped by you/g) || []).length >= 2, null, { timeout: 5000 }).catch(() => {});
   t = await body(page);
   check(`${panel}: two stopped replies are both kept`, (t.match(/Stopped by you/g) || []).length === 2, String((t.match(/Stopped by you/g) || []).length));
   check(`${panel}: no page errors`, errors.length === 0, errors.join(" | "));
