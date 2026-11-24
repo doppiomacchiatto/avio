@@ -1,7 +1,3 @@
-import sys
-if sys.platform != "win32":   # Windows-only suite (needs the 127.0.0.2 loopback address, which only Windows routes by default): pass and exit elsewhere
-    print("PASS skipped: Windows-only suite (platform is " + sys.platform + ")")
-    sys.exit(0)
 import sys, os, tempfile, json, time
 from types import SimpleNamespace as NS
 tmp = tempfile.mkdtemp()
@@ -10,6 +6,13 @@ REPO = __import__("pathlib").Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "backend"))
 import openai, ai_client
 from ai_client import describe_error, ProviderStreamError, Resolved
+try:                       # the HTTP library the openai SDK is built on (httpx2 in current releases)
+    import httpx2 as httpx
+except ImportError:
+    import httpx
+# Real request/response objects: newer SDKs read their headers and history when building an error.
+_REQ = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+def _resp(status, headers=None): return httpx.Response(status, headers=headers or {}, request=_REQ)
 
 fails = 0
 def check(name, ok, detail=""):
@@ -18,7 +21,7 @@ def check(name, ok, detail=""):
     if not ok: fails += 1
 
 def rl(body, headers=None, status=429):
-    resp = NS(status_code=status, headers=headers or {}, request=None)
+    resp = _resp(status, headers)
     cls = openai.RateLimitError if status == 429 else openai.BadRequestError
     return cls(f"Error code: {status}", response=resp, body=body)
 
@@ -86,19 +89,19 @@ m = describe_error(rl({"error": {"message": "x" * 5000}}), ANT, ANT.model)
 check("very long provider message clipped", len(m) < 1200 and "…" in m, str(len(m)))
 
 # ---- the SDK's own mid-stream error: APIError with no status_code (found by the packaged-backend test) -------------
-api = openai.APIError("Rate limit exceeded", NS(), body={"code": 429, "message": "Rate limit exceeded",
+api = openai.APIError("Rate limit exceeded", _REQ, body={"code": 429, "message": "Rate limit exceeded",
                       "metadata": {"provider_name": "Google AI Studio", "raw": "busy"}})
 check("test setup: SDK APIError has no status_code", getattr(api, "status_code", None) is None)
 m = describe_error(api, OR, OR.model)
 check("SDK mid-stream APIError with code 429 gets the friendly message", "Rate limited (429) by openrouter.ai" in m and "paid model" in m and "Google AI Studio" in m, m)
-api5 = openai.APIError("upstream exploded", NS(), body={"code": 500, "message": "upstream exploded"})
+api5 = openai.APIError("upstream exploded", _REQ, body={"code": 500, "message": "upstream exploded"})
 m5 = describe_error(api5, OR, OR.model)
 check("SDK mid-stream APIError with code 500 is explained as a server error", m5.startswith("The reply from openrouter.ai for google/gemma-4-26b-a4b-it:free stopped with error 500: an internal error on its side.") and 'The provider said: "upstream exploded"' in m5, m5)
-api4 = openai.APIError("bad thing", NS(), body={"code": 400, "message": "bad thing"})
+api4 = openai.APIError("bad thing", _REQ, body={"code": 400, "message": "bad thing"})
 check("SDK APIError with a 4xx code keeps its text", describe_error(api4, OR, OR.model) == "bad thing", describe_error(api4, OR, OR.model))
-api_s = openai.APIError("odd", NS(), body={"code": "insufficient_quota", "message": "You exceeded your current quota"})
+api_s = openai.APIError("odd", _REQ, body={"code": "insufficient_quota", "message": "You exceeded your current quota"})
 check("APIError with a string code is not treated as a status", describe_error(api_s, OAI, OAI.model) == "odd")
-api_n = openai.APIError("no body", NS(), body=None)
+api_n = openai.APIError("no body", _REQ, body=None)
 check("APIError with no body keeps its text", describe_error(api_n, OR, OR.model) == "no body")
 
 # ---- OpenRouter guardrail 403 ---------------------------------------------------------------------------------------
@@ -128,14 +131,14 @@ check("403 plan: is honest about what Global cannot promise", "can't promise" in
 check("403 plan: quotes OpenRouter's own message and names the upgrade page", 'OpenRouter said: "Regional routing requires a Business or Enterprise plan' in pm and "manage-plan" in pm, pm)
 check("403 plan: names the model it was sent for", "for qwen/qwen3-coder" in pm, pm)
 check("403 plan on the EU address names EU", "plan doesn't include EU routing" in describe_error(rl({"error": {"message": plan_msg, "code": 403}}, status=403), Resolved("https://eu.openrouter.ai/api/v1", "m", "k"), "m"))
-check("403 plan reported mid-stream is explained the same way", "plan doesn't include US routing" in describe_error(openai.APIError("blocked", NS(), body={"code": 403, "message": plan_msg}), ORU, ORU.model))
+check("403 plan reported mid-stream is explained the same way", "plan doesn't include US routing" in describe_error(openai.APIError("blocked", _REQ, body={"code": 403, "message": plan_msg}), ORU, ORU.model))
 other = describe_error(rl({"error": {"message": "Model anthropic/claude-x is not allowed by your guardrail", "code": 403}}, status=403), ORU, ORU.model)
 check("403 model/provider/budget: points at the guardrail and Avio's region", "almost always an account guardrail" in other and "match Avio's settings" in other and "include the US region" in other, other)
 check("403: never contains the key", "SECRETKEY" not in m and "SECRETKEY" not in other)
 plain = rl({"error": {"message": "forbidden"}}, status=403)
 check("403 from a non-OpenRouter host keeps its original text", describe_error(plain, OAI, OAI.model) == str(plain))
 check("403 with no connection keeps its original text", describe_error(plain, None, None) == str(plain))
-sdk403 = openai.APIError("blocked", NS(), body={"code": 403, "message": region_msg})
+sdk403 = openai.APIError("blocked", _REQ, body={"code": 403, "message": region_msg})
 check("403 reported mid-stream (SDK APIError) is explained too", "only accepts requests through US" in describe_error(sdk403, ORG, ORG.model), describe_error(sdk403, ORG, ORG.model))
 check("429 behaviour is unchanged", "Rate limited (429)" in describe_error(rl(body), ORG, ORG.model))
 
@@ -181,7 +184,7 @@ check("chunks without model_extra still work", out[0] == "ok", str(out))
 
 # ---- server errors (5xx): the provider's failure, said plainly ---------------------------------------------------------
 def se(status, body, headers=None, text=None):
-    resp = NS(status_code=status, headers=headers or {}, request=None)
+    resp = _resp(status, headers)
     return openai.InternalServerError(text or f"Error code: {status}", response=resp, body=body)
 ORN = Resolved("https://us.openrouter.ai/api/v1", "nvidia/nemotron-3-ultra-550b-a55b", "SECRETKEY-1234")
 LOC = Resolved("http://localhost:11434/v1", "llama3:8b", "")
@@ -219,7 +222,7 @@ check("mid-stream 502: says the reply stopped, with the meaning",
       m.startswith("The reply from us.openrouter.ai for nvidia/nemotron-3-ultra-550b-a55b stopped with error 502: the model's host is down or returned an invalid response."), m)
 check("mid-stream 502: does not claim a retry (a started reply is not retried)", "tried again" not in m and "not your API key" in m, m)
 check("mid-stream 502: quotes the provider", 'The provider said (DeepInfra): "Provider disconnected mid-stream"' in m, m)
-m = describe_error(openai.APIError("gateway", NS(), body={"code": 522, "message": "gateway"}), ORN, ORN.model)
+m = describe_error(openai.APIError("gateway", _REQ, body={"code": 522, "message": "gateway"}), ORN, ORN.model)
 check("SDK mid-stream APIError with code 522 uses the mid-stream wording", m.startswith("The reply from us.openrouter.ai") and "error 522: a connection timeout" in m and "tried again" not in m, m)
 
 m = describe_error(se(529, {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}), ANT, ANT.model)
@@ -237,7 +240,7 @@ m = describe_error(se(502, {"error": {"message": "bad gateway", "code": 502}}), 
 check("the OpenRouter meanings are not used for other providers", "a bad gateway (the server behind it gave no valid answer)" in m, m)
 m = describe_error(se(503, {"error": {"message": "y" * 5000}}), OAI, OAI.model)
 check("a very long provider message is clipped", len(m) < 900, str(len(m)))
-e404 = openai.NotFoundError("Error code: 404 - no such model", response=NS(status_code=404, headers={}, request=None), body={"error": {"message": "no such model"}})
+e404 = openai.NotFoundError("Error code: 404 - no such model", response=_resp(404), body={"error": {"message": "no such model"}})
 check("a 404 keeps its original text", describe_error(e404, ORN, ORN.model) == str(e404))
 
 # ---- server errors over real HTTP: what the SDK really raises, and how often it asks ------------------------------------
@@ -270,12 +273,25 @@ class SrvErr(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"data: " + json.dumps(o).encode() + b"\n\n")
             self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush(); return
         self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-s = socket.socket(); s.bind(("127.0.0.1", 0)); PORT5 = s.getsockname()[1]; s.close()
-srv5 = http.server.ThreadingHTTPServer(("0.0.0.0", PORT5), SrvErr)
+# The fake must look like a cloud provider. 127.0.0.2 is loopback but not treated as local (ai_client._LOOPBACK);
+# Windows and Linux route it, macOS does not unless aliased. There, use 127.0.0.1 and mark just this URL as cloud.
+def _bindable(host):
+    try:
+        with socket.socket() as t: t.bind((host, 0))
+        return True
+    except OSError:
+        return False
+CLOUD = "127.0.0.2" if _bindable("127.0.0.2") else "127.0.0.1"
+s = socket.socket(); s.bind((CLOUD, 0)); PORT5 = s.getsockname()[1]; s.close()
+srv5 = http.server.ThreadingHTTPServer((CLOUD, PORT5), SrvErr)
 threading.Thread(target=srv5.serve_forever, daemon=True).start()
+CLOUD_URL = f"http://{CLOUD}:{PORT5}/v1"
+real_is_local = ai_client._is_local
+if CLOUD == "127.0.0.1":
+    ai_client._is_local = lambda url: False if (url or "").startswith(CLOUD_URL) else real_is_local(url)
 real = ai_client.AIClient()
 def ask(model):
-    r = Resolved(f"http://127.0.0.2:{PORT5}/v1", model, "SECRETKEY-1234")     # 127.0.0.2: not treated as a local server
+    r = Resolved(CLOUD_URL, model, "SECRETKEY-1234")     # a cloud stand-in, not a local server
     out = []
     try:
         for x in real.stream([{"role": "user", "content": "q"}], system="S", model=model, resolved=r):
@@ -288,7 +304,7 @@ check("real 522: the SDK raises a status error with status_code 522", getattr(e,
 check("real 522: Avio asked twice (one retry), as the message says", hits.get("cf522") == 2 and ai_client.CHAT_MAX_RETRIES == 1, str(hits))
 m = describe_error(e, r, "cf522")
 check("real 522: friendly message, HTML reduced to its title, nothing else leaked",
-      m.startswith("127.0.0.2 could not answer for cf522: error 522, a connection timeout") and "Avio already tried again once." in m
+      m.startswith(f"{CLOUD} could not answer for cf522: error 522, a connection timeout") and "Avio already tried again once." in m
       and 'The provider said: "us.openrouter.ai | 522: Connection timed out"' in m and "<" not in m and "filler" not in m and "SECRETKEY" not in m, m)
 check("real 522: before this change the panel showed only the SDK's bare text", str(e) == "Error code: 522" and isinstance(e.body, str) and "<html" in e.body, repr(str(e)))
 out, e, r = ask("or503")
@@ -301,8 +317,8 @@ out, e, r = ask("mid502")
 m = describe_error(e, r, "mid502") if e else ""
 check("real mid-stream 502: the partial text arrived, then the error is explained without a retry claim",
       out[:1] == ["partial"] and isinstance(e, openai.APIError) and getattr(e, "status_code", None) is None and hits.get("mid502") == 1
-      and m.startswith("The reply from 127.0.0.2 for mid502 stopped with error 502: a bad gateway") and "tried again" not in m and 'The provider said (FakeHost): "Provider disconnected mid-stream"' in m, f"{out!r} | {m}")
-srv5.shutdown()
+      and m.startswith(f"The reply from {CLOUD} for mid502 stopped with error 502: a bad gateway") and "tried again" not in m and 'The provider said (FakeHost): "Provider disconnected mid-stream"' in m, f"{out!r} | {m}")
+srv5.shutdown(); ai_client._is_local = real_is_local
 
 # ---- endpoint end to end -----------------------------------------------------------------------------------------------------
 from fastapi.testclient import TestClient

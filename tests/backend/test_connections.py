@@ -1,10 +1,6 @@
-import sys
-if sys.platform != "win32":   # Windows-only suite (exercises the Windows Credential Manager keystore): pass and exit elsewhere
-    print("PASS skipped: Windows-only suite (platform is " + sys.platform + ")")
-    sys.exit(0)
 import os, sys, json, shutil, tempfile
 tmp = tempfile.mkdtemp()
-os.environ["APPDATA"] = tmp                       # isolate Avio config / secrets from the real ones
+os.environ["APPDATA"] = tmp; os.environ["HOME"] = tmp; os.environ["XDG_DATA_HOME"] = tmp   # isolate Avio config / secrets from the real ones (APPDATA on Windows, ~/.avio on macOS, XDG on Linux)
 for k in ("OPENCODE_API_KEY", "OPENCODE_BASE_URL", "OPENCODE_MODEL", "AVIO_SECRET_BACKEND", "AVIO_API_TOKEN", "ANTHROPIC_API_KEY"):
     os.environ.pop(k, None)
 REPO = __import__("pathlib").Path(__file__).resolve().parents[2]

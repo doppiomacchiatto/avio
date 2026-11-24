@@ -31,9 +31,17 @@ Coverage is concentrated on the **AI chat side**. The Salesforce-data side is mo
 | `test_errors.py` | the real-522 checks time out against `127.0.0.2` (macOS does not route that loopback address by default) |
 | `test_connections.py` | failure not read; assumed to be the Windows Credential Manager keystore |
 
-**Current handling:** each of the five starts with a platform guard. On anything but `win32` it prints `PASS skipped: Windows-only suite (platform is ...)` and exits 0, so `npm test` is green on macOS. **Consequence:** these five suites give no coverage on macOS; the real checks run only on the Windows CI runner. The reasons for `test_stop.py` and `test_connections.py` in the guard comments are guesses and should be confirmed by running them on Windows or reading the traceback with the guard removed.
+**Fixed (2026-11-24): the five suites are portable now and the platform guards are gone.** What actually tied each one to Windows, found by running them on Linux (WSL) with the guards removed:
 
-**Option to get real macOS coverage later:** replace `stub_sf.cmd` with a cross-platform launcher, make the keystore path logic platform-aware, and use `127.0.0.1` (or an alias) instead of `127.0.0.2` for the cloud-provider case.
+| Suite | Real cause | Fix |
+|---|---|---|
+| `test_chats.py` | hard-coded `<tmp>/Avio/secret.json`; the data dir is `~/.avio` on macOS and `$XDG_DATA_HOME/avio` on Linux | uses `chats_dir().parent` |
+| `test_orglogin.py` | `stub_sf.cmd`, and `tasklist` for the "is the process alive" checks | off Windows it writes a `#!/bin/sh` launcher (`exec python stub_sf.py`) into the temp dir; `alive()` uses `os.kill(pid, 0)` and treats zombies as dead |
+| `test_stop.py` | nothing platform-specific: passes on Linux unchanged | none (the macOS crash is unexplained; possibly the openai SDK version, see `test_errors.py`) |
+| `test_errors.py` | (1) not the platform: newer openai SDKs (3.59) read `response.request.headers` / `.history`, so the `SimpleNamespace` stand-ins crash on startup; (2) `127.0.0.2` is not routable on macOS | (1) real `httpx2` (or `httpx`) Request/Response objects; (2) uses `127.0.0.2` when it can bind it, else `127.0.0.1` with `ai_client._is_local` patched to treat only that URL as cloud |
+| `test_connections.py` | set only `APPDATA`, so on macOS/Linux it read and wrote the **real** `~/.avio` / `~/.local/share/avio` | sets `HOME` and `XDG_DATA_HOME` too (it already uses an in-memory keyring) |
+
+**Verified:** all five pass on Windows and on Linux (Ubuntu 22.04 in WSL, Python 3.10, openai 3.59); the `127.0.0.1` fallback in `test_errors.py` was forced once on Windows and passes. **Not verified on a Mac:** run `npm test` there to confirm.
 
 ## 3. Coverage gaps (priority order)
 
@@ -58,7 +66,7 @@ Coverage is concentrated on the **AI chat side**. The Salesforce-data side is mo
 7. **E2E flows** for SOQL Runner and FLS Explorer if UI coverage is wanted (same Playwright route-mocking pattern as the existing scripts).
 8. **Optional:** a separate real-org smoke script against a throwaway scratch org. Not part of CI; needs a decision on whether it is wanted.
 
-**Decisions still open:** keep the plain-script style (recommended, matches the existing suites) or move to pytest; whether to want real macOS coverage for the five guarded suites; whether to add the optional real-org smoke script.
+**Decisions still open:** keep the plain-script style (recommended, matches the existing suites) or move to pytest; whether to add the optional real-org smoke script.
 
 ## 5. Tests owed for the Record Counts change (2026-11-24)
 

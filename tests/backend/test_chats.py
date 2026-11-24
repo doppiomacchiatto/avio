@@ -1,7 +1,3 @@
-import sys
-if sys.platform != "win32":   # Windows-only suite (needs the Windows keystore layout): pass and exit elsewhere
-    print("PASS skipped: Windows-only suite (platform is " + sys.platform + ")")
-    sys.exit(0)
 import sys, os, tempfile, json, time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -79,7 +75,7 @@ for bad in ("../config", "apex-20261116-120000/../../x", "..\\x", "nope"):
     except chat_store.UnknownChat: check(f"get with bad id {bad!r} is unknown", True)
     try: chat_store.delete_chat(bad); check(f"delete with bad id {bad!r} is unknown", False, "no error")
     except chat_store.UnknownChat: check(f"delete with bad id {bad!r} is unknown", True)
-outside = Path(tmp) / "Avio" / "secret.json"; outside.write_text("{}")
+outside = D.parent / "secret.json"; outside.write_text("{}")   # D.parent is the Avio data dir on every platform
 try: chat_store.delete_chat("../secret"); except_ok = False
 except chat_store.UnknownChat: except_ok = True
 check("a traversal delete cannot touch a file outside chats/", except_ok and outside.exists())
@@ -114,7 +110,6 @@ finally:
 check("failed write leaves no temp or partial file", not list(D.glob("*.tmp")) and not (D / "apex-20261116-120040.json").exists())
 
 # ---- retention: 3 days ------------------------------------------------------------------------------------
-d = Path(tmp) / "Avio" / "chats"
 for p in D.glob("*.json"): p.unlink()
 old = chat_store.save_chat("apex", [U("old")], now=NOW)
 mid = chat_store.save_chat("soql", [U("mid")], now=NOW + timedelta(days=1, hours=23))
