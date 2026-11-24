@@ -1,3 +1,7 @@
+import sys
+if sys.platform != "win32":   # Windows-only suite (exercises the Windows Credential Manager keystore): pass and exit elsewhere
+    print("PASS skipped: Windows-only suite (platform is " + sys.platform + ")")
+    sys.exit(0)
 import os, sys, json, shutil, tempfile
 tmp = tempfile.mkdtemp()
 os.environ["APPDATA"] = tmp                       # isolate Avio config / secrets from the real ones

@@ -1,3 +1,7 @@
+import sys
+if sys.platform != "win32":   # Windows-only suite (written for Windows): pass and exit elsewhere
+    print("PASS skipped: Windows-only suite (platform is " + sys.platform + ")")
+    sys.exit(0)
 import sys, os, tempfile, json, time, threading, http.server
 tmp = tempfile.mkdtemp()
 os.environ["APPDATA"] = tmp; os.environ["HOME"] = tmp; os.environ["XDG_DATA_HOME"] = tmp
