@@ -298,15 +298,6 @@ function OrgHealthCheck({ org, onClose }) {
 // Quick-action chip definitions — shown as cards + chips
 const QUICK_ACTIONS = [
   {
-    id: "record_counts",
-    emoji: "📊",
-    label: "Record Counts",
-    description: "Top objects by volume",
-    what: "Run COUNT() queries on Account, Contact, Lead, Opportunity, Case, Task, Event, and any available custom objects to show record volumes across your org.",
-    apiCalls: "Up to 8 SOQL COUNT() queries",
-    prompt: "List the top objects in this org by record count. Run SOQL COUNT() queries for Account, Contact, Lead, Opportunity, Case, Task, and Event. Show the results in a clear table.",
-  },
-  {
     id: "suggest_queries",
     emoji: "🔍",
     label: "Suggest Queries",

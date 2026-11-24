@@ -719,7 +719,9 @@ def run_soql_query(req: SoqlRequest):
         # Strip Salesforce attributes wrapper
         clean = [{k: v for k, v in r.items() if k != "attributes"} for r in records]
         _qh_save(req.alias, req.query, len(clean))
-        return {"records": clean, "totalSize": len(clean)}
+        # SELECT COUNT() returns no records, only totalSize: keep the org's number
+        total = data.get("result", {}).get("totalSize")
+        return {"records": clean, "totalSize": total if isinstance(total, int) else len(clean)}
     except Exception as e:
         raise HTTPException(500, str(e))
 

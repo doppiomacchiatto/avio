@@ -201,6 +201,10 @@ Be concise and direct.`;
   );
 }
 
+const COUNT_OBJECTS = ["Account", "Contact", "Lead", "Opportunity", "Case", "Task", "Event", "User"];
+const MAX_CUSTOM_COUNTS = 20;   // each count is one sf CLI call: cap the custom objects
+const COUNT_CONCURRENCY = 4;
+
 // ─── Main SoqlRunner ──────────────────────────────────────────────────────────
 
 export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall }) {
@@ -215,6 +219,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   const [debugLog,    setDebugLog]   = useState([]);
   const [debugOpen,   setDebugOpen]  = useState(false);
   const [aiOpen,      setAiOpen]     = useSessionState("soql.ai.open", false);   // stays open when you return to this tab
+  const [counting,    setCounting]   = useState(false);
 
   // SObject browser — reads from shared ctx
   const objects    = ctx?.objects || [];
@@ -302,6 +307,36 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
     } finally {
       setLoading(false);
     }
+  }
+
+  // Record Counts: one SELECT COUNT() per object (standard core objects + the org's custom objects), shown as a table
+  async function runRecordCounts() {
+    if (!org) { setError("Select an org first."); return; }
+    const names = [...new Set([...COUNT_OBJECTS, ...objects.map((o) => o.apiName).filter((n) => n.endsWith("__c")).slice(0, MAX_CUSTOM_COUNTS)])];
+    setCounting(true); setError(""); setRows([]); setCols([]); setPage(0);
+    log(`Record Counts: ${names.length} COUNT() queries on ${org.alias}…`);
+    const t0 = Date.now();
+    const out = [];
+    let next = 0;
+    async function worker() {
+      while (next < names.length) {
+        const name = names[next++];
+        try {
+          const d = await api("/api/soql", { method: "POST", body: JSON.stringify({ alias: org.alias, query: `SELECT COUNT() FROM ${name}` }) });
+          out.push([name, d.totalSize ?? 0, ""]);
+        } catch (e) {
+          out.push([name, -1, e.message]);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: COUNT_CONCURRENCY }, worker));
+    out.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    setCols(["Object", "Records", "Note"]);
+    setRows(out.map(([n, c, err]) => [n, c < 0 ? "" : c.toLocaleString(), err ? err.slice(0, 120) : ""]));
+    const failed = out.filter((r) => r[1] < 0).length;
+    log(`Record Counts: ${out.length - failed} of ${out.length} objects counted in ${Date.now() - t0}ms`, failed ? "error" : "success");
+    onApiCall?.();
+    setCounting(false);
   }
 
   function exportCsv() {
@@ -438,10 +473,18 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
           <div className="flex flex-col gap-2 shrink-0">
             <button
               onClick={runQuery}
-              disabled={loading}
+              disabled={loading || counting}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded text-sm font-semibold transition-colors"
             >
               {loading ? <Spinner label="" /> : "▶ Run"}
+            </button>
+            <button
+              onClick={runRecordCounts}
+              disabled={loading || counting}
+              className="px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700 rounded text-sm font-semibold transition-colors"
+              title="Run COUNT() on the core objects and your custom objects"
+            >
+              {counting ? <Spinner label="" /> : "📊 Counts"}
             </button>
             <button
               onClick={() => setAiOpen(o => !o)}
