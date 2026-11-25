@@ -101,4 +101,4 @@ A typed request ("record counts", "top objects by record count", the old chip pr
 
 ## 7. State of the working tree
 
-Everything above is committed on `opencode/mvp-0`. Separately, palermo has staged, uncommitted code-signing changes (on hold); leave them alone.
+Everything above is committed on `opencode/mvp-0`. Code signing is planned for 1.0.7.
