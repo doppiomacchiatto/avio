@@ -61,5 +61,15 @@ check("text: one line per object, failures say why", text.includes("\nTask: 4,00
   && text.includes("Ship__c: not counted (sObject type 'Ship__c' is not supported.)"), text);
 check("text: singular for one object", recordCountsText("o", summarizeCounts([{ name: "A", count: 3, error: "" }])).includes("3 records across 1 object."));
 
+// ---- typed requests the chat answers by running the counts -----------------------------------------------
+const { isRecordCountsRequest } = RC;
+for (const yes of ["record counts", "Record Counts please", "show me the record count", "Count the records in this org",
+  "List the top objects in this org by record count. Run SOQL COUNT() queries for Account, Contact, Lead, Opportunity, Case, Task, and Event. Show the results in a clear table.",
+  "how many records are in each object?", "which are the largest objects by volume", "objects by record count", "record volumes across my org"])
+  check(`counts request: ${JSON.stringify(yes.slice(0, 50))}`, isRecordCountsRequest(yes));
+for (const no of ["", null, "write a SOQL query for Accounts in Texas", "count the Accounts created this year", "how many fields does Account have?",
+  "explain the data model", "SELECT COUNT() FROM Account", "x".repeat(500) + " record counts"])
+  check(`not a counts request: ${JSON.stringify(String(no).slice(0, 50))}`, !isRecordCountsRequest(no));
+
 console.log("\nfailures:", fails);
 process.exit(fails ? 1 : 0);

@@ -31,6 +31,21 @@ export async function countRecords(names, runQuery, { concurrency = COUNT_CONCUR
   return out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
+// True when a typed chat message asks for the org-wide record counts ("record counts", "top objects by record
+// count", "how many records are in each object"). The chat then runs the counts instead of asking the model,
+// which can only write queries. A question about one object's data ("count the Accounts in Texas") is left
+// to the model.
+export function isRecordCountsRequest(text) {
+  const t = String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!t || t.length > 400) return false;
+  return /\brecord ?counts?\b/.test(t)
+    || /\b(count|counting) (all |the )?(of )?records\b/.test(t)
+    || /\bhow many records\b.*\b(each|every|per|all|by) (object|objects|sobject)/.test(t)
+    || /\b(top|largest|biggest) objects\b.*\b(records?|volume|count)/.test(t)
+    || /\bobjects? by (record )?(count|volume)\b/.test(t)
+    || /\brecord volumes?\b/.test(t);
+}
+
 // Totals and shares for the chat report.
 export function summarizeCounts(results) {
   const ok = results.filter((r) => r.count >= 0);

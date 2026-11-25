@@ -87,6 +87,8 @@ Record Counts moved from AI Chat to **SOQL Runner** (new **📊 Counts** button)
 2. `tests/frontend/test_record_counts.mjs` (21 checks): targets, the 20-object cap, concurrency, sorting, failure handling, totals, shares and the report text.
 3. `tests/e2e/e2e_counts.mjs` (24 checks): SOQL Runner fills the table sorted by count, one failing object does not stop the others, Counts and Run are disabled while counting, 28 queries (cap 20); AI Chat shows the confirm screen, a counting notice, the aggregated report (total, largest, one row per object, the failure last), makes no AI call for the counts, and sends the report text with the next question.
 
+A typed request ("record counts", "top objects by record count", the old chip prompt) also runs the counts instead of going to the model (`isRecordCountsRequest`; unit and e2e checks).
+
 **Still not verified:** either button against a real org.
 
 ## 6. Rules for new suites (from `tests/README.md`)

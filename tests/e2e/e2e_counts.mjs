@@ -127,6 +127,16 @@ const sent = aiBody?.messages || [];
 const carried = sent.find((m) => m.role === "assistant" && m.content.includes("8,461 records") && m.content.includes("Task: 4,000"));
 check("AI Chat: the follow-up sends the report text to the AI as context", !!carried, JSON.stringify(sent).slice(0, 300));
 
+// A typed request (the old chip's prompt) runs the counts too, without asking the AI
+await page.getByRole("button", { name: /Clear/ }).click();
+queries = []; peak = 0; aiBody = null;
+await page.locator("textarea").fill("List the top objects in this org by record count. Show the results in a clear table.");
+await page.getByRole("button", { name: "Send" }).click();
+await page.getByTestId("record-counts-report").waitFor({ timeout: 15000 });
+check("AI Chat: a typed counts request runs the counts and posts the report", queries.length === 28, queries.length);
+check("AI Chat: ...without an AI call", aiBody === null, JSON.stringify(aiBody).slice(0, 200));
+check("AI Chat: the typed text is kept as the user's message", await page.getByText("List the top objects in this org by record count.").isVisible());
+
 check("no page errors", errors.length === 0, errors.join(" | "));
 await browser.close();
 console.log("\nfailures:", fails);

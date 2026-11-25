@@ -12,7 +12,7 @@ import { useSessionState } from "../sessionStore";
 import AiHistoryStrip from "../components/AiHistoryStrip";
 import { buildChatSystem } from "../chatSystem";
 import Spinner from "../components/Spinner";
-import { countTargets, countRecords, summarizeCounts, recordCountsText, formatCount, formatShare, MAX_CUSTOM_COUNTS } from "../data/recordCounts";
+import { countTargets, countRecords, summarizeCounts, recordCountsText, isRecordCountsRequest, formatCount, formatShare, MAX_CUSTOM_COUNTS } from "../data/recordCounts";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES, CATEGORY_ICONS,
   STATUS_ICON, STATUS_COLOR,
@@ -362,6 +362,8 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
     const text = (overrideText ?? input).trim();
     if (!text || streaming || counting) return;
     if (!overrideText) setInput("");
+    // "record counts", "top objects by record count"...: run the counts instead of asking the model
+    if (org && isRecordCountsRequest(text)) { await runRecordCounts(text); return; }
 
     const userMsg = { role: "user", content: text };
     const newMsgs = [...messages, userMsg];
@@ -408,7 +410,7 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
 
   // Record Counts: Avio runs the COUNT() queries itself (the model cannot run queries) and posts one report.
   // The report's text stays in the conversation, so the AI can answer follow-up questions about the numbers.
-  async function runRecordCounts() {
+  async function runRecordCounts(userText) {
     if (!org || busy) return;
     const alias = org.alias;
     const names = countTargets(ctx.objects);
@@ -416,7 +418,7 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
     setCounting(true);
     setTruncated(false);
     setMessages((m) => [...m,
-      { role: "user", content: "Record Counts: count the records in this org's main objects." },
+      { role: "user", content: userText || "Record Counts: count the records in this org's main objects." },
       { role: "assistant", content: `📊 Counting records on ${names.length} objects in ${alias}…`, system: true, counting: true }]);
     let reply;
     try {
