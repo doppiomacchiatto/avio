@@ -1,6 +1,6 @@
 // Saving, loading and tracking AI conversations.
 //
-// The three AI surfaces (Apex Runner, SOQL Runner, AI Chat) keep their messages in the session
+// The AI surfaces (Apex Runner, SOQL Runner, AI Chat, and the panels on FLS Explorer, Profiles & PermSets and REST Explorer) keep their messages in the session
 // store (sessionStore.js), which lives until the app closes. This module adds three things:
 //   1. unsaved tracking, so the close dialog can offer Save or Discard;
 //   2. a file format (.json, and a readable .md export) for "Save as..." and "Load...";
@@ -18,6 +18,9 @@ export const SURFACES = {
   apex: { label: "Apex Runner", key: "apex.ai.messages" },
   soql: { label: "SOQL Runner", key: "soql.ai.messages" },
   chat: { label: "AI Chat",     key: "chat.messages"     },
+  fls:      { label: "FLS Explorer",        key: "fls.ai.messages"      },
+  profiles: { label: "Profiles & PermSets", key: "profiles.ai.messages" },
+  rest:     { label: "REST Explorer",       key: "rest.ai.messages"     },
 };
 
 const MAX_SKILLS = 20;

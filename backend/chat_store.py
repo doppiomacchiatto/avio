@@ -29,14 +29,14 @@ log = logging.getLogger(__name__)
 
 FORMAT_VERSION  = 1
 RETENTION_DAYS  = 3
-SURFACES        = ("apex", "soql", "chat")
+SURFACES        = ("apex", "soql", "chat", "fls", "profiles", "rest")
 MAX_MESSAGES    = 500                 # per conversation; the oldest are dropped past this
 MAX_CHARS       = 2_000_000           # total message text per conversation; the oldest are dropped past this
 MAX_FILES       = 60                  # safety net on top of the age limit
 _MAX_SKILLS     = 20
 _MAX_SKILL_LEN  = 100
 
-_ID_RE = re.compile(r"^(apex|soql|chat)-\d{8}-\d{6}(-\d+)?$")
+_ID_RE = re.compile(r"^(apex|soql|chat|fls|profiles|rest)-\d{8}-\d{6}(-\d+)?$")
 
 
 class InvalidChat(ValueError):

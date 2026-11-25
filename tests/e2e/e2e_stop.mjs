@@ -26,6 +26,9 @@ const PANELS = {
   chat: { url: "p=chat", ph: "Ask about your org", send: "Send" },
   soql: { url: "p=soql", ph: "Ask AI about your SOQL query", send: "↑" },
   apex: { url: "p=apex", ph: "Ask AI about your Apex code", send: "↑" },
+  fls:      { url: "p=fls",      ph: "Ask AI about this object's fields", send: "↑" },
+  profiles: { url: "p=profiles", ph: "Ask AI about these permissions",    send: "↑" },
+  rest:     { url: "p=rest",     ph: "Ask AI about the REST API",         send: "↑" },
 };
 
 async function open(panel, connId) {
@@ -46,7 +49,7 @@ const stopBtn = (page) => page.getByRole("button", { name: "■ Stop" });
 const sendBtn = (page, panel) => page.getByRole("button", { name: PANELS[panel].send, exact: true });
 const body = (page) => page.evaluate(() => document.body.innerText);
 
-for (const panel of ["chat", "soql", "apex"]) {
+for (const panel of Object.keys(PANELS)) {
   console.log(`\n=== ${panel} ===`);
   fs.rmSync(LOG, { force: true });
 
