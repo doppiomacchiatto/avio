@@ -2,7 +2,8 @@
 DRAFT. Paste everything below the "---" line into the GitHub release body.
 BEFORE PUBLISHING (delete this comment):
   [ ] Version bumped to 1.0.6 (package.json, frontend/package.json, src-tauri/tauri.conf.json, both package-lock.json, README)
-  [ ] Smoke-tested by the developer on the installed 1.0.6 build, including Record Counts against a real org
+  [x] Record Counts checked against a real org on the installed build (2026-11-24)
+  [ ] Smoke-tested by the developer on the installed 1.0.6 build
   [ ] Hash rows below filled in (scripts/release-notes.mjs does it in CI). If you rebuild by hand, recompute them:
         Get-FileHash .\Avio_1.0.6_x64-setup.exe -Algorithm SHA256
   [ ] Tag v1.0.6-beta points at the main merge commit
@@ -30,7 +31,7 @@ BEFORE PUBLISHING (delete this comment):
 
 ## Tested scope
 
-Record Counts was tested end to end with mocked org responses (both pages, a failing object, the 20-custom-object cap). Before publishing, it is checked against a real org on the installed build. AI features were not changed in this release; the scope tested for 1.0.5 still applies. Review AI-generated Apex before using it, and try it in a sandbox first.
+Record Counts was tested end to end with mocked org responses (both pages, a failing object, the 20-custom-object cap) and by the developer against a real org on the installed build (AI Chat report: 19 objects counted). AI features were not changed in this release; the scope tested for 1.0.5 still applies. Review AI-generated Apex before using it, and try it in a sandbox first.
 
 ## Requirements
 
