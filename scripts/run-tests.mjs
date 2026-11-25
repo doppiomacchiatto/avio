@@ -70,6 +70,13 @@ const portBusy = (port) => new Promise((resolve) => {
 });
 
 // ---- unit suites ---------------------------------------------------------------------------------------
+// e2e_switch and e2e_stop use 127.0.0.2 as the "cloud provider" address (loopback, but not treated as local).
+// Windows and Linux route it; macOS only after: sudo ifconfig lo0 alias 127.0.0.2 up
+const canBind = (host) => new Promise((resolve) => {
+  const s = net.createServer();
+  s.once("error", () => resolve(false));
+  s.listen(0, host, () => s.close(() => resolve(true)));
+});
 if (await portBusy(7889)) console.log("warning: something listens on 7889 (fake_slow.py?); test_stop.py needs that port");
 for (const [dir, f] of BACKEND) run(f, PY, [path.join(T, dir, f)], { cwd: path.join(T, dir) });
 for (const [dir, f] of FRONTEND) run(f, process.execPath, [path.join(T, dir, f)], { cwd: path.join(T, dir) });
@@ -84,8 +91,10 @@ async function e2e() {
   for (const p of [7893, 5199, 7889]) if (await portBusy(p)) { setupFail(`e2e: port ${p} is already in use; stop that server first`); return; }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "avio-e2e-"));
   const appdata = path.join(tmp, "appdata");
-  fs.mkdirSync(path.join(appdata, "Avio"), { recursive: true });
-  fs.writeFileSync(path.join(appdata, "Avio", "config.json"), JSON.stringify({ chat_timeout_seconds: 10 })); // e2e_stop's timeout case
+  // where backend/platform_env.avio_data_dir() puts Avio's data for HOME = APPDATA = XDG_DATA_HOME = appdata
+  const dataDir = path.join(appdata, WIN ? "Avio" : process.platform === "darwin" ? ".avio" : "avio");
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, "config.json"), JSON.stringify({ chat_timeout_seconds: 10 })); // e2e_stop's timeout case
   const closeLog = path.join(tmp, "slow_closed.txt");
   const procs = [];
   const start = (cmd, a, cwd, env, log) => {
@@ -114,15 +123,18 @@ async function e2e() {
     // and that what it saves lands in the temp APPDATA: save a probe chat, look for its file, delete it again
     const probe = await (await fetch("http://127.0.0.1:7893/api/chats", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ surface: "chat", messages: [{ role: "user", content: "e2e isolation probe" }] }) })).json();
-    const chatsDir = path.join(appdata, "Avio", "chats");
+    const chatsDir = path.join(dataDir, "chats");
     const isolated = fs.existsSync(chatsDir) && fs.readdirSync(chatsDir).length > 0;
     if (probe?.id) await fetch("http://127.0.0.1:7893/api/chats/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: probe.id }) });
     if (!isolated) { setupFail(`e2e: the backend on 7893 does not write to the temp APPDATA (${appdata})`, tmp); return; }
     const harnessPage = await (await fetch("http://localhost:5199/_harness/index.html")).text();
     if (!harnessPage.includes("Avio e2e harness")) { setupFail("e2e: vite on 5199 does not serve the harness page", tmp); return; }
-    run("e2e_switch.mjs", process.execPath, [path.join(T, "e2e", "e2e_switch.mjs"), closeLog], { cwd: path.join(T, "e2e") });
+    const cloudAddr = await canBind("127.0.0.2");
+    if (cloudAddr) run("e2e_switch.mjs", process.execPath, [path.join(T, "e2e", "e2e_switch.mjs"), closeLog], { cwd: path.join(T, "e2e") });
+    else console.log("skip  e2e_switch.mjs: 127.0.0.2 is not available (macOS: sudo ifconfig lo0 alias 127.0.0.2 up)");
     run("e2e_panel.mjs", process.execPath, [path.join(T, "e2e", "e2e_panel.mjs")], { cwd: path.join(T, "e2e") });
-    run("e2e_stop.mjs", process.execPath, [path.join(T, "e2e", "e2e_stop.mjs"), closeLog], { cwd: path.join(T, "e2e") });
+    if (cloudAddr) run("e2e_stop.mjs", process.execPath, [path.join(T, "e2e", "e2e_stop.mjs"), closeLog], { cwd: path.join(T, "e2e") });
+    else console.log("skip  e2e_stop.mjs: 127.0.0.2 is not available (macOS: sudo ifconfig lo0 alias 127.0.0.2 up)");
     run("e2e.mjs", process.execPath, [path.join(T, "e2e", "e2e.mjs")], { cwd: path.join(T, "e2e") });
     run("e2e_counts.mjs", process.execPath, [path.join(T, "e2e", "e2e_counts.mjs")], { cwd: path.join(T, "e2e") });
   } finally {

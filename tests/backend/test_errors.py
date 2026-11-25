@@ -306,7 +306,9 @@ m = describe_error(e, r, "cf522")
 check("real 522: friendly message, HTML reduced to its title, nothing else leaked",
       m.startswith(f"{CLOUD} could not answer for cf522: error 522, a connection timeout") and "Avio already tried again once." in m
       and 'The provider said: "us.openrouter.ai | 522: Connection timed out"' in m and "<" not in m and "filler" not in m and "SECRETKEY" not in m, m)
-check("real 522: before this change the panel showed only the SDK's bare text", str(e) == "Error code: 522" and isinstance(e.body, str) and "<html" in e.body, repr(str(e)))
+# The SDK's own text is raw ("Error code: 522" in older openai releases, the HTML page itself in newer ones):
+# only assert that it is not the friendly message and that the raw HTML is what the SDK carries.
+check("real 522: before this change the panel showed only the SDK's raw text", str(e) != m and isinstance(e.body, str) and "<html" in e.body, repr(str(e))[:200])
 out, e, r = ask("or503")
 m = describe_error(e, r, "or503")
 check("real 503 with a JSON body: status, retry count and OpenRouter's message", getattr(e, "status_code", None) == 503 and hits.get("or503") == 2
