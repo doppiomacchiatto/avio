@@ -14,10 +14,16 @@ def check(name, ok, detail=""):
     if not ok: fails += 1
 
 def err(status, message, code=None):
-    resp = NS(status_code=status, headers={}, request=None)
+    # Build the exception without calling the SDK constructor: its __init__ reads response.request/headers/history,
+    # and those internals differ between openai SDK versions (CI and local resolve different ones).
     cls = {400: openai.BadRequestError, 413: openai.APIStatusError, 429: openai.RateLimitError}.get(status, openai.APIStatusError)
-    body = {"error": {"message": message, "code": code}}
-    return cls(f"Error code: {status}", response=resp, body=body)
+    exc = cls.__new__(cls)
+    Exception.__init__(exc, f"Error code: {status}")
+    exc.status_code = status
+    exc.response = NS(status_code=status, headers={})
+    exc.body = {"error": {"message": message, "code": code}}
+    exc.request_id = None
+    return exc
 
 # Skills: bundled, no added skills, no network.
 sf_skills.USER_SKILLS = __import__("pathlib").Path(tmp) / "skills"

@@ -18,12 +18,14 @@ Optional config.json keys: "max_tokens" (reply limit), "skills_inject",
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import threading
 import time
 from dataclasses import dataclass
@@ -907,6 +909,28 @@ def _is_free_model(entry: dict) -> bool:
         return False
 
 
+def _find_socket(root, max_depth: int = 10) -> Optional[socket.socket]:
+    """The socket under an openai.Stream's httpx response (breadth-first through the object graph, so it keeps
+    working when httpx/httpcore move their private attributes). The shared connection pool is not entered:
+    it also holds other requests' sockets."""
+    seen = {id(root)}
+    frontier = [root]
+    for _ in range(max_depth):
+        nxt = []
+        for o in frontier:
+            for r in gc.get_referents(o):
+                if isinstance(r, socket.socket):
+                    return r
+                if id(r) in seen or isinstance(r, (type, str, bytes, int, float, bool)) or callable(r) and not hasattr(r, "__dict__"):
+                    continue
+                if type(r).__name__ in ("ConnectionPool", "HTTPTransport", "Client", "OpenAI"):
+                    continue
+                seen.add(id(r))
+                nxt.append(r)
+        frontier = nxt
+    return None
+
+
 class AIClient:
     def __init__(self):
         # One SDK client per (URL, key): different panels can use different connections at once.
@@ -947,6 +971,14 @@ class AIClient:
             live = self._live.get(request_id)
         if live is None:
             return False
+        # close() alone does not wake a thread blocked reading the socket on macOS/Linux (it does on Windows):
+        # shut the socket down first so the read ends now instead of when the provider next sends something.
+        try:
+            sock = _find_socket(getattr(live, "response", None))
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+        except Exception as e:
+            log.debug("shutting down stream %s: %s", request_id, type(e).__name__)
         try:
             live.close()
         except Exception as e:                    # closing from another thread can raise; the read still ends

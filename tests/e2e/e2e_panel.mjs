@@ -114,7 +114,8 @@ await drag(-200);
 const kept = await width();
 check("a width was chosen", near(kept, 680), kept);
 await page.setViewportSize({ width: 800, height: 720 });
-await page.waitForFunction(() => document.getElementById("ai").getBoundingClientRect().width <= 562);
+// the library can show a proportional width for a moment before it clamps: wait for the clamp, not just for "smaller"
+await page.waitForFunction(() => Math.abs(document.getElementById("ai").getBoundingClientRect().width - (800 - 6) * 0.7) <= 3, null, { timeout: 5000 }).catch(() => {});
 check("a smaller window clamps the panel to 70%", near(await width(), (800 - 6) * 0.7, 3), await width());
 check("and the editor keeps a usable width", (await restWidth()) >= 230, await restWidth());
 await page.setViewportSize({ width: 1280, height: 720 });
