@@ -76,12 +76,18 @@ Record Counts moved from AI Chat to **SOQL Runner** (new **📊 Counts** button)
 - `backend/main.py` (`/api/soql`): `totalSize` now comes from the org's result (a `COUNT()` returns no records, so `len(records)` was always 0); falls back to `len(records)` when absent.
 - `frontend/src/pages/ClaudeChat.jsx`: the Record Counts card/chip was removed.
 
-**Verified:** `vite build` passes; `npm test` shows no new failures. **Not verified:** the button against a real org; no test covers any of the three changes.
+**Follow-up (2026-11-24, Windows): AI Chat runs Record Counts again, for real.** Juan wanted the chat to run the queries and give an aggregated report, not just write them.
 
-**Tests to add:**
-1. Backend: `/api/soql` returns the org's `totalSize` for a `COUNT()` result with empty `records`, and `len(records)` when `totalSize` is missing (Python stub in place of `sf`, so it runs on macOS too).
-2. E2E (Playwright, mock `/api/soql` per object): the button fills the table sorted by count; one failing object does not stop the others; the button is disabled while counting; Run is disabled too.
-3. Cap check: with more than 20 custom objects loaded, only 20 are queried.
+- `frontend/src/data/recordCounts.js` (new): the counting logic shared by both pages: `countTargets` (core list + up to 20 `__c`), `countRecords` (4 at a time, failures kept), `summarizeCounts` (total, shares, custom total, empty and failed objects), `recordCountsText`.
+- `ClaudeChat.jsx`: the 📊 Record Counts card/chip is back. Proceed runs the COUNT() queries through `/api/soql` (no AI call, no tokens) and posts one report: total records, the three largest objects with their shares, custom-object share, empty and failed objects, and a table with a share bar per object. The report's plain text stays in the conversation, so follow-up questions about the numbers reach the AI. If the object list has not loaded yet, only the core objects are counted and the report says so.
+- `SoqlRunner.jsx`: the Counts button uses the shared module (same behaviour); it logs when custom objects are left out because the object list is not loaded.
+
+**Tests (all added, all passing on Windows; the backend one also on Linux):**
+1. `tests/backend/test_soql_counts.py` (13 checks): `/api/soql` returns the org's `totalSize` for `COUNT()`, keeps it for partial results, falls back to `len(records)` when it is missing or not an int, strips `attributes`, maps a CLI error to a 500 with the message. `_sf_raw` is replaced in-process, so it runs offline everywhere.
+2. `tests/frontend/test_record_counts.mjs` (21 checks): targets, the 20-object cap, concurrency, sorting, failure handling, totals, shares and the report text.
+3. `tests/e2e/e2e_counts.mjs` (24 checks): SOQL Runner fills the table sorted by count, one failing object does not stop the others, Counts and Run are disabled while counting, 28 queries (cap 20); AI Chat shows the confirm screen, a counting notice, the aggregated report (total, largest, one row per object, the failure last), makes no AI call for the counts, and sends the report text with the next question.
+
+**Still not verified:** either button against a real org.
 
 ## 6. Rules for new suites (from `tests/README.md`)
 
@@ -93,4 +99,4 @@ Record Counts moved from AI Chat to **SOQL Runner** (new **📊 Counts** button)
 
 ## 7. State of the working tree
 
-Uncommitted on `opencode/mvp-0`: the Record Counts change (3 files, section 5), the platform guards on the five suites (section 2), and this file.
+Everything above is committed on `opencode/mvp-0`. Separately, palermo has staged, uncommitted code-signing changes (on hold); leave them alone.

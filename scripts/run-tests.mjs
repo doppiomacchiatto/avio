@@ -27,8 +27,8 @@ if (!fs.existsSync(PY)) { console.error(`Python not found: ${PY} (create backend
 const ENV = { ...process.env, PYTHONIOENCODING: "utf-8", AVIO_TEST_PYTHON: PY };
 
 const BACKEND = ["test_connections", "test_backend", "test_skills", "test_errors", "test_workspace",
-  "test_orglogin", "test_chats", "test_stop", "test_context_guard", "test_local_detection", "test_skill_detection"].map((n) => ["backend", n + ".py"]);
-const FRONTEND = ["test_blocks", "test_chatsystem", "test_session", "test_chathistory", "test_strip_ssr", "test_local_url"]
+  "test_orglogin", "test_chats", "test_stop", "test_context_guard", "test_local_detection", "test_skill_detection", "test_soql_counts"].map((n) => ["backend", n + ".py"]);
+const FRONTEND = ["test_blocks", "test_chatsystem", "test_session", "test_chathistory", "test_strip_ssr", "test_local_url", "test_record_counts"]
   .map((n) => ["frontend", n + ".mjs"]);
 
 const results = [];
@@ -124,6 +124,7 @@ async function e2e() {
     run("e2e_panel.mjs", process.execPath, [path.join(T, "e2e", "e2e_panel.mjs")], { cwd: path.join(T, "e2e") });
     run("e2e_stop.mjs", process.execPath, [path.join(T, "e2e", "e2e_stop.mjs"), closeLog], { cwd: path.join(T, "e2e") });
     run("e2e.mjs", process.execPath, [path.join(T, "e2e", "e2e.mjs")], { cwd: path.join(T, "e2e") });
+    run("e2e_counts.mjs", process.execPath, [path.join(T, "e2e", "e2e_counts.mjs")], { cwd: path.join(T, "e2e") });
   } finally {
     for (const p of procs) {
       if (WIN) spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)], { stdio: "ignore" });

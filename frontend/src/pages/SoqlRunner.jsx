@@ -16,6 +16,7 @@ import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
 import AiSplit from "../components/AiSplit";
 import AiHistoryStrip from "../components/AiHistoryStrip";
+import { countTargets, countRecords } from "../data/recordCounts";
 
 const PAGE_SIZE = 50;
 
@@ -201,10 +202,6 @@ Be concise and direct.`;
   );
 }
 
-const COUNT_OBJECTS = ["Account", "Contact", "Lead", "Opportunity", "Case", "Task", "Event", "User"];
-const MAX_CUSTOM_COUNTS = 20;   // each count is one sf CLI call: cap the custom objects
-const COUNT_CONCURRENCY = 4;
-
 // ─── Main SoqlRunner ──────────────────────────────────────────────────────────
 
 export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall }) {
@@ -312,28 +309,15 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   // Record Counts: one SELECT COUNT() per object (standard core objects + the org's custom objects), shown as a table
   async function runRecordCounts() {
     if (!org) { setError("Select an org first."); return; }
-    const names = [...new Set([...COUNT_OBJECTS, ...objects.map((o) => o.apiName).filter((n) => n.endsWith("__c")).slice(0, MAX_CUSTOM_COUNTS)])];
+    const names = countTargets(objects);
     setCounting(true); setError(""); setRows([]); setCols([]); setPage(0);
     log(`Record Counts: ${names.length} COUNT() queries on ${org.alias}…`);
+    if (!ctx?.objectsLoaded) log("Record Counts: custom objects are not included until the object list is loaded");
     const t0 = Date.now();
-    const out = [];
-    let next = 0;
-    async function worker() {
-      while (next < names.length) {
-        const name = names[next++];
-        try {
-          const d = await api("/api/soql", { method: "POST", body: JSON.stringify({ alias: org.alias, query: `SELECT COUNT() FROM ${name}` }) });
-          out.push([name, d.totalSize ?? 0, ""]);
-        } catch (e) {
-          out.push([name, -1, e.message]);
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: COUNT_CONCURRENCY }, worker));
-    out.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const out = await countRecords(names, (query) => api("/api/soql", { method: "POST", body: JSON.stringify({ alias: org.alias, query }) }));
     setCols(["Object", "Records", "Note"]);
-    setRows(out.map(([n, c, err]) => [n, c < 0 ? "" : c.toLocaleString(), err ? err.slice(0, 120) : ""]));
-    const failed = out.filter((r) => r[1] < 0).length;
+    setRows(out.map((r) => [r.name, r.count < 0 ? "" : r.count.toLocaleString(), r.error ? r.error.slice(0, 120) : ""]));
+    const failed = out.filter((r) => r.count < 0).length;
     log(`Record Counts: ${out.length - failed} of ${out.length} objects counted in ${Date.now() - t0}ms`, failed ? "error" : "success");
     onApiCall?.();
     setCounting(false);
