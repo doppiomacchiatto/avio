@@ -12,6 +12,7 @@ import { useSessionState } from "../sessionStore";
 import AiHistoryStrip from "../components/AiHistoryStrip";
 import { buildChatSystem } from "../chatSystem";
 import Spinner from "../components/Spinner";
+import { countTargets, countRecords, summarizeCounts, recordCountsText, isRecordCountsRequest, formatCount, formatShare, MAX_CUSTOM_COUNTS } from "../data/recordCounts";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES, CATEGORY_ICONS,
   STATUS_ICON, STATUS_COLOR,
@@ -302,9 +303,9 @@ const QUICK_ACTIONS = [
     emoji: "📊",
     label: "Record Counts",
     description: "Top objects by volume",
-    what: "Run COUNT() queries on Account, Contact, Lead, Opportunity, Case, Task, Event, and any available custom objects to show record volumes across your org.",
-    apiCalls: "Up to 8 SOQL COUNT() queries",
-    prompt: "List the top objects in this org by record count. Run SOQL COUNT() queries for Account, Contact, Lead, Opportunity, Case, Task, and Event. Show the results in a clear table.",
+    what: `Run a SOQL COUNT() query on Account, Contact, Lead, Opportunity, Case, Task, Event, User and up to ${MAX_CUSTOM_COUNTS} custom objects, then show one report: total records, the largest objects and each object's share. Avio runs the queries itself, so this uses no AI tokens. You can ask about the numbers afterwards.`,
+    apiCalls: `One SOQL COUNT() query per object (8 + up to ${MAX_CUSTOM_COUNTS} custom), four at a time`,
+    run: "record_counts",
   },
   {
     id: "suggest_queries",
@@ -335,6 +336,8 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
   const conn = useConnectionChoice("chat");                  // which saved AI connection this tab uses
   const [showHealth,  setShowHealth]  = useState(false);
   const [pendingAction, setPendingAction] = useState(null); // QUICK_ACTIONS entry
+  const [counting,    setCounting]    = useState(false);     // Record Counts queries running
+  const busy = streaming || counting;
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -357,8 +360,10 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
 
   async function sendMessage(overrideText) {
     const text = (overrideText ?? input).trim();
-    if (!text || streaming) return;
+    if (!text || streaming || counting) return;
     if (!overrideText) setInput("");
+    // "record counts", "top objects by record count"...: run the counts instead of asking the model
+    if (org && isRecordCountsRequest(text)) { await runRecordCounts(text); return; }
 
     const userMsg = { role: "user", content: text };
     const newMsgs = [...messages, userMsg];
@@ -401,6 +406,38 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
       (names) => { skills = names; },   // skills the backend really injected (shown once text arrives)
       { surface: "chat" },
     );
+  }
+
+  // Record Counts: Avio runs the COUNT() queries itself (the model cannot run queries) and posts one report.
+  // The report's text stays in the conversation, so the AI can answer follow-up questions about the numbers.
+  async function runRecordCounts(userText) {
+    if (!org || busy) return;
+    const alias = org.alias;
+    const names = countTargets(ctx.objects);
+    const note = ctx.objectsLoaded ? "" : "Custom objects were not included: the org's object list had not loaded yet.";
+    setCounting(true);
+    setTruncated(false);
+    setMessages((m) => [...m,
+      { role: "user", content: userText || "Record Counts: count the records in this org's main objects." },
+      { role: "assistant", content: `📊 Counting records on ${names.length} objects in ${alias}…`, system: true, counting: true }]);
+    let reply;
+    try {
+      const results = await countRecords(names, (query) =>
+        api("/api/soql", { method: "POST", body: JSON.stringify({ alias, query }) }));
+      const summary = summarizeCounts(results);
+      const text = recordCountsText(alias, summary) + (note ? `\n\n${note}` : "");
+      reply = { role: "assistant", content: text, report: { alias, note, ...summary } };
+    } catch (e) {
+      reply = { role: "assistant", content: `❌ Record Counts failed: ${e.message}`, system: true };
+    }
+    setMessages((m) => [...m.filter((x) => !x.counting), reply]);
+    setCounting(false);
+  }
+
+  function proceed(action) {
+    setPendingAction(null);
+    if (action.run === "record_counts") runRecordCounts();
+    else sendChip(action.prompt);
   }
 
   // Stop: keep what has arrived (marked as stopped); an empty placeholder is dropped. The backend closes
@@ -493,17 +530,19 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">API Usage</p>
           <p className="text-slate-700 dark:text-gray-200 text-xs">{pendingAction.apiCalls}</p>
         </div>
-        <div className="px-4 py-3 bg-slate-100 dark:bg-gray-700 rounded-xl border border-slate-200 dark:border-gray-700">
-          <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Prompt</p>
-          <p className="text-slate-600 dark:text-gray-300 text-xs font-mono leading-relaxed">{pendingAction.prompt}</p>
-        </div>
+        {pendingAction.prompt && (
+          <div className="px-4 py-3 bg-slate-100 dark:bg-gray-700 rounded-xl border border-slate-200 dark:border-gray-700">
+            <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Prompt</p>
+            <p className="text-slate-600 dark:text-gray-300 text-xs font-mono leading-relaxed">{pendingAction.prompt}</p>
+          </div>
+        )}
       </div>
       <div className="shrink-0 px-6 py-4 border-t border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex gap-3">
         <button onClick={() => setPendingAction(null)}
           className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-gray-600 text-slate-600 dark:text-gray-300 hover:text-slate-900 dark:hover:text-white hover:border-blue-400 text-sm transition-colors">
           Cancel
         </button>
-        <button onClick={() => { const p = pendingAction.prompt; setPendingAction(null); sendChip(p); }}
+        <button onClick={() => proceed(pendingAction)}
           className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
           ▶ Proceed
         </button>
@@ -520,16 +559,16 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           🏥 Org Health Check
         </button>
         {QUICK_ACTIONS.map(a => (
-          <button key={a.id} disabled={streaming || !org}
+          <button key={a.id} disabled={busy || !org}
             onClick={() => setPendingAction(a)}
             className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-full border border-blue-400 transition-colors font-medium">
             {a.emoji} {a.label}
           </button>
         ))}
         <div className="ml-auto flex items-center gap-2">
-          <ConnectionPicker {...conn} onChange={conn.choose} disabled={streaming} dark={false} />
+          <ConnectionPicker {...conn} onChange={conn.choose} disabled={busy} dark={false} />
           {messages.length > 0 && (
-            <button onClick={() => { setMessages([]); setTruncated(false); }} disabled={streaming}
+            <button onClick={() => { setMessages([]); setTruncated(false); }} disabled={busy}
               className="px-3 py-1 text-xs text-slate-400 hover:text-red-500 transition-colors">
               🗑 Clear
             </button>
@@ -562,7 +601,7 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
                 <p className="text-slate-400 text-xs mt-0.5">16 checks · security, limits & metadata</p>
               </button>
               {QUICK_ACTIONS.map(a => (
-                <button key={a.id} disabled={streaming || !org}
+                <button key={a.id} disabled={busy || !org}
                   onClick={() => setPendingAction(a)}
                   className="p-3 bg-white dark:bg-gray-800 hover:bg-slate-50 dark:hover:bg-gray-700/50 border border-slate-200 dark:border-gray-700 rounded-xl text-left transition-colors disabled:opacity-40">
                   <p className="text-sm">{a.emoji}</p>
@@ -582,7 +621,7 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
                 ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-800 rounded-bl-sm text-xs font-mono"
                 : "bg-white dark:bg-gray-800 text-slate-800 dark:text-gray-100 border border-slate-200 dark:border-gray-700 rounded-bl-sm"
             }`}>
-              <MarkdownText text={msg.content} />
+              {msg.report ? <RecordCountsReport report={msg.report} /> : <MarkdownText text={msg.content} />}
               {msg.role === "assistant" && !msg.system && msg.content && <SkillsUsed skills={msg.skills} />}
               {msg.stopped && <StoppedNotice />}
             </div>
@@ -615,20 +654,69 @@ export default function ClaudeChat({ org, ctx, setCtx, loadObjects }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
           }}
-          disabled={streaming}
+          disabled={busy}
         />
         {streaming ? (
           <StopButton onStop={stopReply} className="px-4 py-2 rounded-xl text-sm self-end" />
         ) : (
           <button
             onClick={() => sendMessage()}
-            disabled={!input.trim()}
+            disabled={!input.trim() || counting}
             className="px-4 py-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white rounded-xl text-sm font-medium self-end transition-colors"
           >
             Send
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// The Record Counts report: totals, then one row per object with its share of all counted records.
+function RecordCountsReport({ report }) {
+  const { alias, rows, total, counted, failed, empty, custom, note } = report;
+  const top = rows.filter((r) => r.count > 0).slice(0, 3);
+  return (
+    <div data-testid="record-counts-report" className="flex flex-col gap-2">
+      <p>📊 <strong>Record Counts</strong> for {alias}: <strong>{formatCount(total)}</strong> records across {counted} object{counted === 1 ? "" : "s"}
+        {failed ? <span className="text-red-600 dark:text-red-400"> ({failed} could not be counted)</span> : null}.</p>
+      {top.length > 0 && (
+        <p className="text-xs text-slate-500 dark:text-gray-400">
+          Largest: {top.map((r) => `${r.name} ${formatCount(r.count)} (${formatShare(r.share)})`).join(", ")}.
+          {custom > 0 && ` Custom objects hold ${formatCount(custom)} (${formatShare(custom / total)}).`}
+          {empty > 0 && ` ${empty} empty.`}
+        </p>
+      )}
+      <table className="text-xs border-collapse">
+        <thead>
+          <tr className="text-left text-slate-500 dark:text-gray-400 border-b border-slate-200 dark:border-gray-700">
+            <th className="py-1 pr-4 font-semibold">Object</th>
+            <th className="py-1 pr-4 font-semibold text-right">Records</th>
+            <th className="py-1 font-semibold">Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.name} className="border-b border-slate-100 dark:border-gray-700/60">
+              <td className="py-1 pr-4 font-mono">{r.name}</td>
+              {r.count < 0 ? (
+                <td colSpan={2} className="py-1 text-red-600 dark:text-red-400" title={r.error}>not counted: {r.error.slice(0, 200)}</td>
+              ) : (<>
+                <td className="py-1 pr-4 text-right tabular-nums">{formatCount(r.count)}</td>
+                <td className="py-1 w-40">
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 flex-1 bg-slate-100 dark:bg-gray-700 rounded">
+                      <div className="h-1.5 bg-blue-500 rounded" style={{ width: `${Math.max(r.share * 100, r.count ? 1 : 0)}%` }} />
+                    </div>
+                    <span className="tabular-nums text-slate-500 dark:text-gray-400 w-10 text-right">{formatShare(r.share)}</span>
+                  </div>
+                </td>
+              </>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {note && <p className="text-xs text-slate-500 dark:text-gray-400">{note}</p>}
     </div>
   );
 }

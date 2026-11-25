@@ -16,6 +16,7 @@ import { useConnectionChoice } from "../connections";
 import { useSessionState } from "../sessionStore";
 import AiSplit from "../components/AiSplit";
 import AiHistoryStrip from "../components/AiHistoryStrip";
+import { countTargets, countRecords } from "../data/recordCounts";
 
 const PAGE_SIZE = 50;
 
@@ -215,6 +216,7 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   const [debugLog,    setDebugLog]   = useState([]);
   const [debugOpen,   setDebugOpen]  = useState(false);
   const [aiOpen,      setAiOpen]     = useSessionState("soql.ai.open", false);   // stays open when you return to this tab
+  const [counting,    setCounting]   = useState(false);
 
   // SObject browser — reads from shared ctx
   const objects    = ctx?.objects || [];
@@ -302,6 +304,23 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
     } finally {
       setLoading(false);
     }
+  }
+
+  // Record Counts: one SELECT COUNT() per object (standard core objects + the org's custom objects), shown as a table
+  async function runRecordCounts() {
+    if (!org) { setError("Select an org first."); return; }
+    const names = countTargets(objects);
+    setCounting(true); setError(""); setRows([]); setCols([]); setPage(0);
+    log(`Record Counts: ${names.length} COUNT() queries on ${org.alias}…`);
+    if (!ctx?.objectsLoaded) log("Record Counts: custom objects are not included until the object list is loaded");
+    const t0 = Date.now();
+    const out = await countRecords(names, (query) => api("/api/soql", { method: "POST", body: JSON.stringify({ alias: org.alias, query }) }));
+    setCols(["Object", "Records", "Note"]);
+    setRows(out.map((r) => [r.name, r.count < 0 ? "" : r.count.toLocaleString(), r.error ? r.error.slice(0, 120) : ""]));
+    const failed = out.filter((r) => r.count < 0).length;
+    log(`Record Counts: ${out.length - failed} of ${out.length} objects counted in ${Date.now() - t0}ms`, failed ? "error" : "success");
+    onApiCall?.();
+    setCounting(false);
   }
 
   function exportCsv() {
@@ -438,10 +457,18 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
           <div className="flex flex-col gap-2 shrink-0">
             <button
               onClick={runQuery}
-              disabled={loading}
+              disabled={loading || counting}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded text-sm font-semibold transition-colors"
             >
               {loading ? <Spinner label="" /> : "▶ Run"}
+            </button>
+            <button
+              onClick={runRecordCounts}
+              disabled={loading || counting}
+              className="px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700 rounded text-sm font-semibold transition-colors"
+              title="Run COUNT() on the core objects and your custom objects"
+            >
+              {counting ? <Spinner label="" /> : "📊 Counts"}
             </button>
             <button
               onClick={() => setAiOpen(o => !o)}

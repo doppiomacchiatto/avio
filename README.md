@@ -1,4 +1,4 @@
-# Avio v1.0.5 Beta — Salesforce Metadata Explorer
+# Avio v1.0.6 Beta — Salesforce Metadata Explorer
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Avio-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/doppiomacchiato)
 
@@ -18,7 +18,7 @@ Cross-platform desktop app (macOS · Windows · Linux) built with **Tauri v2** (
 **Not code-signed yet.** Windows SmartScreen may show "Windows protected your PC": click **More info → Run anyway**. Each release lists the SHA-256 of its installers; to check yours:
 
 ```powershell
-Get-FileHash .\Avio_1.0.5_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Avio_1.0.6_x64-setup.exe -Algorithm SHA256
 ```
 
 Upgrading from Vendavis? Your settings move to `%APPDATA%\Avio\` automatically on first run.
@@ -219,7 +219,11 @@ npx tauri build
 # → src-tauri/target/release/bundle/appimage/Avio_*.AppImage (Linux)
 ```
 
+**Clean build in one step:** `clean-build.bat` (Windows) or `./clean-build.sh` (macOS, Linux, Git Bash) removes the old outputs (`frontend/dist`, `backend/dist`, `backend/build`, `src-tauri/target/release/bundle`), sets `RUSTFLAGS` so the build machine's home path is not embedded, runs `npm run tauri:build`, and prints the SHA-256 of each installer. Options: `--deps` reinstalls Node and Python dependencies, `--full` also runs `cargo clean` (much slower next build), `--no-build` only cleans. Close Avio first; the script stops if it is running. Cleaning deletes the previous installers, so copy them out first if they still need publishing.
+
 `npm run tauri:build` runs the backend and Tauri steps together (the frontend is built by Tauri's `beforeBuildCommand`). The release binaries are not code-signed yet.
+
+CI (`.github/workflows/`): `test.yml` runs `npm test` and the browser tests on every branch push and pull request (Windows runner). Pushing a `v<version>-beta` tag runs `release.yml`: the tests, then the installers, then a GitHub pre-release with the `.exe`, the `.msi` and `SHA256SUMS.txt` attached and `RELEASE-NOTES-v<version>-beta.md` (below its `---` line, with the real hashes filled in) as body. The tag must match the version in `package.json`. Running `release.yml` by hand builds the installers as a workflow artifact without publishing.
 
 ## User data
 

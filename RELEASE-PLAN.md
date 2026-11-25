@@ -13,7 +13,7 @@ Tracker for getting Avio from "works on my machine" to "signed download on GitHu
 | Tag `v1.0.1-beta` | Created 2026-11-14 on `main` merge commit `50e3c4a` (annotated, pushed). The tagged code was verified by the developer. If code changes before publishing, merge to `main` and move the tag (`git tag -d`, `git push origin :refs/tags/v1.0.1-beta`, re-tag), then rebuild and recompute the hashes |
 | Windows signing | On hold. Waiting for the developer to sign up for Azure and report back; do not start before then (the repo-side steps need the endpoint/account/profile names) |
 | macOS signing | Not started |
-| Distribution (GitHub Releases) | **Published 2026-11-14** as a public pre-release with both installers (GitHub's hashes match the notes). Open: the description still says "First Release", so the notes in `RELEASE-NOTES-v1.0.1-beta.md` still need to be pasted in |
+| Distribution (GitHub Releases) | **Published 2026-11-14** as a public pre-release with both installers (GitHub's hashes match the notes). Open: the description still says "First Release", so the notes in the published v1.0.1-beta release on GitHub still need to be pasted in |
 | CI workflow | None (`.github/` only has `FUNDING.yml`) |
 | Docs / wiki | README only; decision below |
 | Funding | Done: GitHub `FUNDING.yml`, README badge, About button. Decided: no Ko-fi link on the project website |
@@ -122,8 +122,8 @@ Binaries go on **GitHub Releases**, never in the repo (about 26 MB per build; gi
 - [x] Release created from the tag `v1.0.1-beta`, marked **pre-release** (2026-11-14)
 - [x] Attached `Avio_1.0.1_x64-setup.exe` and `Avio_1.0.1_x64_en-US.msi`; add `.dmg` / `.AppImage` when those exist
 - [ ] **Paste the release notes into the description** (it currently says "First Release"; edit at `https://github.com/doppiomacchiatto/avio/releases/edit/v1.0.1-beta`). Optionally rename the title `v1.0.1-Beta` to `Avio 1.0.1 Beta`
-- [ ] SHA-256 checksums in the notes (they are in `RELEASE-NOTES-v1.0.1-beta.md`; they arrive with the paste above)
-- [x] Release notes drafted 2026-11-14 in `RELEASE-NOTES-v1.0.1-beta.md` (review, then paste into the release; hashes inside must match the uploaded files). Contents: what's new, requirements (Salesforce CLI `sf`, an authenticated org, optional AI key), and while unsigned: *"Windows may show 'Windows protected your PC'. Click More info → Run anyway."*
+- [ ] SHA-256 checksums in the notes (they are in the published v1.0.1-beta release on GitHub; they arrive with the paste above)
+- [x] Release notes drafted 2026-11-14 in the published v1.0.1-beta release on GitHub (review, then paste into the release; hashes inside must match the uploaded files). Contents: what's new, requirements (Salesforce CLI `sf`, an authenticated org, optional AI key), and while unsigned: *"Windows may show 'Windows protected your PC'. Click More info → Run anyway."*
 - [x] README Download section added (2026-11-14). It links to `https://github.com/doppiomacchiatto/avio/releases`, **not** `/releases/latest`: GitHub's "latest" skips pre-releases and currently just redirects to the releases list. Once a full (non-pre) release exists, `/releases/latest` can be used for a direct link.
 
 ### Later: automate with CI

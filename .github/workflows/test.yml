@@ -1,0 +1,61 @@
+# Runs Avio's test suites (tests/README.md) on every branch push and pull request.
+# Also called by release.yml, so a release is only built from a commit whose tests pass.
+name: Tests
+
+on:
+  push:
+    branches: ["**"]      # branches only: a pushed tag runs release.yml, which calls this workflow itself
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Windows: the app, the keystore and the e2e browser (Edge, preinstalled on the runner and found by tests/e2e/browser.mjs) are Windows-first
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            tests/e2e/package-lock.json
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # The scripts expect backend/.venv, the same layout as a dev machine
+      - name: Python venv
+        shell: pwsh
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/Scripts/python.exe -m pip install --upgrade pip
+          backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
+
+      - name: npm install
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund          # postinstall installs frontend/
+          npm ci --no-audit --no-fund --prefix tests/e2e
+
+      - name: Unit suites (backend + frontend)
+        run: npm test
+
+      # --only=e2e: just the browser scripts (the unit suites ran above); the runner starts and stops its servers
+      - name: Browser tests (e2e)
+        run: node scripts/run-tests.mjs --e2e --only=e2e

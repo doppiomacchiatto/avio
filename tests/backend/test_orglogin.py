@@ -25,10 +25,30 @@ def wait_state(want, secs=20):
         time.sleep(0.2)
     return org_login.status()
 def alive(pid):
-    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
-    return str(pid) in out
+    if os.name == "nt":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    stat = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(stat) and not stat.startswith("Z")           # a zombie is dead, just not reaped yet
 
-sf_cli.SF_CLI = os.path.abspath(os.path.join(FIXTURES, "stub_sf.cmd"))
+def stub_cli():
+    """The sf stand-in: stub_sf.cmd on Windows; elsewhere a sh launcher written to tmp (no exec bit needed in git)."""
+    if os.name == "nt":
+        return os.path.abspath(os.path.join(FIXTURES, "stub_sf.cmd"))
+    path = os.path.join(tmp, "sf")
+    py, stub = sys.executable, os.path.abspath(os.path.join(FIXTURES, "stub_sf.py"))
+    with open(path, "w") as f:                                # exec, so the stub's pid is the CLI's pid
+        f.write("#!/bin/sh\n" + f"exec '{py}' '{stub}' " + '"$@"\n')
+    os.chmod(path, 0o755)
+    return path
+
+sf_cli.SF_CLI = stub_cli()
 
 # ---- options and the airgap override ------------------------------------------------------------
 cfg = {}
@@ -116,7 +136,7 @@ try:
 except FileNotFoundError:
     check("missing CLI raises FileNotFoundError", True)
 sf_cli._find_sf_cli = real_find
-sf_cli.SF_CLI = os.path.abspath(os.path.join(FIXTURES, "stub_sf.cmd"))
+sf_cli.SF_CLI = stub_cli()
 
 # ---- HTTP endpoints -------------------------------------------------------------------------------------
 from fastapi.testclient import TestClient

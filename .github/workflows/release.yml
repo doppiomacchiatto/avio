@@ -1,0 +1,124 @@
+# Builds the Windows installers and publishes a GitHub pre-release.
+#
+#   git tag v1.0.6-beta <main merge commit> && git push origin v1.0.6-beta
+#
+# On a pushed v*-beta tag: runs the tests (test.yml), checks that the tag matches the version in package.json and
+# src-tauri/tauri.conf.json and that RELEASE-NOTES-v<version>-beta.md exists, builds the backend (PyInstaller) and
+# the app (Tauri: NSIS .exe + .msi), and creates a pre-release named after the notes' "# " heading, with both
+# installers and SHA256SUMS.txt attached and the notes (below their "---" line, real hashes filled in) as body.
+#
+# Run it by hand (Actions > Release > Run workflow) on any branch to build the installers without publishing:
+# they are kept as a workflow artifact for 14 days.
+name: Release
+
+on:
+  push:
+    tags: ["v*-beta"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write        # create the release
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $pkg   = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($pkg -ne $tauri) { throw "package.json ($pkg) and tauri.conf.json ($tauri) disagree" }
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}"
+            if ($tag -ne "v$pkg-beta") { throw "tag $tag does not match version $pkg (expected v$pkg-beta)" }
+            if (-not (Test-Path "RELEASE-NOTES-v$pkg-beta.md")) { throw "missing RELEASE-NOTES-v$pkg-beta.md" }
+          }
+          "version=$pkg" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Python venv
+        shell: pwsh
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/Scripts/python.exe -m pip install --upgrade pip
+          backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: npm install
+        run: npm ci --no-audit --no-fund
+
+      # Code signing: not set up yet (waits on Azure Trusted Signing). When it is, either add
+      # bundle.windows.signCommand to src-tauri/tauri.windows.conf.json (Tauri then signs avio.exe, the
+      # sidecar and both installers during the build) with the Azure credentials as repository secrets passed
+      # to this step's env, or add a signing step after the build and before the hashes are taken.
+      - name: Build installers
+        shell: pwsh
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=. --remap-path-prefix=C:\Users\runneradmin=~
+        run: npm run tauri:build
+
+      - name: Collect installers
+        id: files
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $exe = "src-tauri/target/release/bundle/nsis/Avio_${v}_x64-setup.exe"
+          $msi = "src-tauri/target/release/bundle/msi/Avio_${v}_x64_en-US.msi"
+          foreach ($f in $exe, $msi) { if (-not (Test-Path $f)) { throw "not built: $f" } }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $exe, $msi out/
+          Get-ChildItem out -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Name)"
+          } | Set-Content out/SHA256SUMS.txt -Encoding ascii
+          Get-Content out/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: avio-${{ steps.version.outputs.version }}-windows
+          path: out/
+          retention-days: 14
+
+      - name: Create pre-release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $title = node scripts/release-notes.mjs $v release-body.md "out/Avio_${v}_x64-setup.exe" "out/Avio_${v}_x64_en-US.msi"
+          if ($LASTEXITCODE) { throw "release notes failed" }
+          gh release create "${{ github.ref_name }}" --verify-tag --prerelease --title "$title" --notes-file release-body.md `
+            "out/Avio_${v}_x64-setup.exe" "out/Avio_${v}_x64_en-US.msi" out/SHA256SUMS.txt
