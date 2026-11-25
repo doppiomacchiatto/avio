@@ -14,7 +14,8 @@ def check(name, ok, detail=""):
     if not ok: fails += 1
 
 def err(status, message, code=None):
-    resp = NS(status_code=status, headers={}, request=None)
+    req = NS(headers={}, method="POST", url="https://api.example.test/v1/chat/completions")
+    resp = NS(status_code=status, headers={}, request=req)
     cls = {400: openai.BadRequestError, 413: openai.APIStatusError, 429: openai.RateLimitError}.get(status, openai.APIStatusError)
     body = {"error": {"message": message, "code": code}}
     return cls(f"Error code: {status}", response=resp, body=body)
