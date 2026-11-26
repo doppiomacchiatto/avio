@@ -5,13 +5,13 @@
 import { useState, useRef, useEffect } from "react";
 import { api, waitForBackend } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES,
   CATEGORY_ICONS, STATUS_ICON, STATUS_COLOR,
 } from "../data/healthChecks";
+import { debugLog, clearDebugLog } from "../debugLog";
 
 // ── HTML report generator ─────────────────────────────────────────────────────
 const esc = (s) => String(s ?? "")
@@ -332,17 +332,11 @@ export default function OrgHealth({ org, onApiCall }) {
   const [current,  setCurrent]  = useState(null);
   const [activeCategory, setActiveCategory] = useState(null);
   const [runScope, setRunScope] = useState(null); // null = all, string = single category
-  const [debugLog,  setDebugLog]  = useState([]);
-  const [debugOpen, setDebugOpen] = useState(false);
   const cancelRef = useRef(false);
   const lastOrg   = useRef(null);
 
-  function log(msg, type = "info") {
-    const ts = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : type === "warn" ? "⚠️" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // Reset when org changes
   useEffect(() => {
@@ -393,7 +387,7 @@ export default function OrgHealth({ org, onApiCall }) {
       : HEALTH_CHECKS;
     setRunScope(filterCat ?? null);
     setPhase("running");
-    setDebugLog([]);
+    clearDebugLog("health");
     log(`Starting ${checksToRun.length} check(s)${filterCat ? ` in ${filterCat}` : ""}…`);
     // Keep existing results for other categories when running a single one
     if (filterCat) {
@@ -625,14 +619,6 @@ export default function OrgHealth({ org, onApiCall }) {
           )}
         </div>
       </div>
-
-      {/* ── Debug log ───────────────────────────────────────────────────────── */}
-      <DebugLogPanel
-        entries={debugLog}
-        open={debugOpen}
-        onToggle={() => setDebugOpen((o) => !o)}
-        onClear={() => setDebugLog([])}
-      />
 
       {/* ── Export saved toast ──────────────────────────────────────────────── */}
       {exportToast && (

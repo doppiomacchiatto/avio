@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
 import { api, isTauri } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { debugLog } from "../debugLog";
 
 export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjectsShared, onApiCall }) {
   // Objects come from shared ctx — no local copy needed
@@ -18,8 +18,6 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
   const [exporting,   setExporting]   = useState(false);
   const [exportedFiles, setExportedFiles] = useState([]);
   const cancelRef = useRef(false);
-  const [debugOpen,   setDebugOpen]   = useState(false);
-  const [debugLog,    setDebugLog]    = useState([]);
 
   // Validation Rules state
   const [vrRules,       setVrRules]       = useState([]);
@@ -54,13 +52,8 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
     });
   }
 
-  function log(msg, type = "info") {
-    const ts = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    // Auto-open on errors
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // ── Load Objects — delegates to shared App.jsx loader ──────────────────────
   async function loadObjects() {
@@ -437,8 +430,8 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
       {/* ── Right panel: fields (75%) + debug log (25%) ─────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* Fields table — takes all space when debug closed, 75% when open */}
-        <div className={`flex flex-col ${debugOpen ? "h-3/4" : "flex-1"} overflow-hidden`}>
+        {/* Fields table */}
+        <div className="flex flex-col flex-1 overflow-hidden">
           {/* Header bar */}
           <div className="px-4 py-2.5 border-b border-gray-200 dark:border-gray-700 text-sm text-gray-500 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between shrink-0">
             <span>
@@ -736,14 +729,6 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
           </div>
         )}
 
-        {/* ── Debug log — collapsible ───────────────────────────────────────── */}
-        <DebugLogPanel
-          entries={debugLog}
-          open={debugOpen}
-          onToggle={() => setDebugOpen((o) => !o)}
-          onClear={() => setDebugLog([])}
-          heightClass="h-1/4"
-        />
       </div>
     </div>
   );

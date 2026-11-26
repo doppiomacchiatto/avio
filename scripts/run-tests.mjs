@@ -137,6 +137,7 @@ async function e2e() {
     else console.log("skip  e2e_stop.mjs: 127.0.0.2 is not available (macOS: sudo ifconfig lo0 alias 127.0.0.2 up)");
     run("e2e.mjs", process.execPath, [path.join(T, "e2e", "e2e.mjs")], { cwd: path.join(T, "e2e") });
     run("e2e_counts.mjs", process.execPath, [path.join(T, "e2e", "e2e_counts.mjs")], { cwd: path.join(T, "e2e") });
+    run("e2e_debug.mjs", process.execPath, [path.join(T, "e2e", "e2e_debug.mjs")], { cwd: path.join(T, "e2e") });
   } finally {
     for (const p of procs) {
       if (WIN) spawnSync("taskkill", ["/T", "/F", "/PID", String(p.pid)], { stdio: "ignore" });

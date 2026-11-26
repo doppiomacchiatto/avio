@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
 import { api, isTauri, authHeaders } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { debugLog } from "../debugLog";
 
 const FIELD_PAGE_SIZE = 30;
 
@@ -40,15 +40,8 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
   const cancelRef = useRef(false);
 
   // ── Debug log ─────────────────────────────────────────────────────────────
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [debugLog,  setDebugLog]  = useState([]);
-
-  function log(msg, type = "info") {
-    const ts   = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // ── Loaders ────────────────────────────────────────────────────────────────
   async function loadProfiles() {
@@ -593,7 +586,7 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
         )}
 
         {/* FLS table header */}
-        <div className={`flex flex-col ${debugOpen ? "h-3/4" : "flex-1"} overflow-hidden`}>
+        <div className="flex flex-col flex-1 overflow-hidden">
           <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between shrink-0 gap-2">
             <span className="text-sm text-gray-500">
               {loadingFls
@@ -664,14 +657,6 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
           </div>
         </div>
 
-        {/* ── Debug log ─────────────────────────────────────────────────────── */}
-        <DebugLogPanel
-          entries={debugLog}
-          open={debugOpen}
-          onToggle={() => setDebugOpen((o) => !o)}
-          onClear={() => setDebugLog([])}
-          heightClass="h-1/4"
-        />
       </div>
     </div>
   );

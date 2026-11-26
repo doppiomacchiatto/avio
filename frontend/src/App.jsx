@@ -8,12 +8,12 @@ import ApexRunner from "./pages/ApexRunner";
 import ClaudeChat from "./pages/ClaudeChat";
 import OrgHealth from "./pages/OrgHealth";
 import RestExplorer from "./pages/RestExplorer";
-import DebugLogModal from "./components/DebugLogModal";
+import DebugDock, { DebugDockButton } from "./components/DebugDock";
 import WelcomeModal, { shouldShowWelcome } from "./components/WelcomeModal";
 import { api, waitForBackend, isTauri, openExternal, isLocalUrl, stopStream } from "./api/client";
 import { getSession, setSession } from "./sessionStore";
 import { loadConnections } from "./connections";
-import { debugLog, useDebugLog } from "./debugLog";
+import { debugLog, setDebugSource } from "./debugLog";
 import { RETENTION_DAYS, unsavedChats, hasUnsavedChats, saveUnsavedToApp, resetSurface } from "./chatHistory";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -28,16 +28,19 @@ const TABS = [
   { id: "claude",   label: "🤖 AI Chat"             },
 ];
 
+const FIRST_TAB = "fls";
+setDebugSource(FIRST_TAB);
+
 export default function App() {
   const [activeOrg,     setActiveOrg]     = useState(null);
   const [showOrgPicker, setShowOrgPicker] = useState(true);
-  const [activeTab,     setActiveTab]     = useState("fls");
+  const [activeTab,     setActiveTab]     = useState(FIRST_TAB);
+  // Tag the debug log with the new tab before it renders, so the page's mount-time entries carry its id.
+  const changeTab = (tab) => { setDebugSource(tab); setActiveTab(tab); };
   const [orgContext,    setOrgContext]     = useState({ objects: [], fields: {}, objectsLoading: false, objectsLoaded: false });
   const [apiLimits,     setApiLimits]     = useState(null);   // {used, max}
   const [limitsError,   setLimitsError]   = useState("");
   const [limitsOpen,    setLimitsOpen]    = useState(false);
-  const [debugOpen,     setDebugOpen]     = useState(false);
-  const debugEntries = useDebugLog();
 
   // ── Quit confirm modal ─────────────────────────────────────────────────────
   const [quitConfirm,   setQuitConfirm]   = useState(false);
@@ -589,8 +592,6 @@ export default function App() {
 
       {welcomeOpen && <WelcomeModal onClose={() => setWelcomeOpen(false)} />}
 
-      {debugOpen && <DebugLogModal onClose={() => setDebugOpen(false)} />}
-
       {/* Quit confirm modal */}
       {quitConfirm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100]">
@@ -780,13 +781,7 @@ export default function App() {
           >
             Restart Backend
           </button>
-          <button
-            onClick={() => setDebugOpen(true)}
-            className="text-sm bg-blue-600 hover:bg-blue-500 border border-blue-400 rounded px-3 py-1 transition-colors"
-            title="Debug log"
-          >
-            🐞 Debug{debugEntries.length > 0 && ` (${debugEntries.length})`}
-          </button>
+          <DebugDockButton className="text-sm bg-blue-600 hover:bg-blue-500 aria-pressed:bg-blue-800 border border-blue-400 rounded px-3 py-1 transition-colors" />
           <button
             onClick={() => { setSettingsSaved(""); setSettingsOpen(true); }}
             className="text-sm bg-blue-600 hover:bg-blue-500 border border-blue-400 rounded px-3 py-1 transition-colors"
@@ -856,10 +851,11 @@ export default function App() {
       )}
 
       {/* Tab bar */}
-      <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
+      <TabBar tabs={TABS} active={activeTab} onChange={changeTab} />
 
-      {/* Page content */}
-      <main className="flex-1 overflow-hidden">
+      {/* Page content, with the debug log docked below it */}
+      <DebugDock tab={activeTab}>
+      <main className="flex-1 min-h-0 overflow-hidden">
         {activeTab === "fls"      && <FlsExplorer      org={activeOrg} ctx={orgContext} setCtx={setOrgContext} loadObjects={loadObjects} onApiCall={() => fetchLimits()} />}
         {activeTab === "profiles" && <ProfilesExplorer org={activeOrg} ctx={orgContext} setCtx={setOrgContext} loadObjects={loadObjects} onApiCall={() => fetchLimits()} />}
         {activeTab === "soql"     && <SoqlRunner        org={activeOrg} ctx={orgContext} setCtx={setOrgContext} loadObjects={loadObjects} onApiCall={() => fetchLimits()} />}
@@ -868,6 +864,7 @@ export default function App() {
         {activeTab === "rest"     && <RestExplorer org={activeOrg} />}
         {activeTab === "claude"   && <ClaudeChat  org={activeOrg} ctx={orgContext} setCtx={setOrgContext} loadObjects={loadObjects} />}
       </main>
+      </DebugDock>
 
       {/* Global footer — API limit status bar */}
       {activeOrg && (

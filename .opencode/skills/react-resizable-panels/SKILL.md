@@ -40,7 +40,13 @@ use them; read the README sections before considering them.
 
 ## How Avio uses it today
 
-`frontend/src/components/AiSplit.jsx` is the only place. It lays out the Apex Runner and the SOQL Runner:
+Two components use it. `frontend/src/components/DebugDock.jsx` is a vertical group around every tab: the page
+above, the debug log below. The log panel is `collapsible` with `collapsedSize` set to its header height (28px),
+so it is always mounted and opening it never remounts the page; `debugLog.js` holds the open state and the
+dock follows it with `panelRef.resize()` / `collapse()`. Its height is remembered in `localStorage`
+(`avio.debug.height`), saved only on `meta.isUserInteraction`.
+
+`frontend/src/components/AiSplit.jsx` lays out the Apex Runner and the SOQL Runner:
 the page on the left (`children`) and, while `open`, the AI panel (`ai`) on the right of a `Separator`.
 
 ```jsx
@@ -95,8 +101,9 @@ What it does, and why:
 ## Adding another resizable area
 
 1. Read the matching example in `references/examples.md`, then the README section for each prop you use.
-2. If it is another AI-style side panel, reuse `AiSplit`. Otherwise build it with `Group`/`Panel`/`Separator`
-   in its own component under `frontend/src/components/`, following the patterns in `AiSplit.jsx`.
+2. If it is another AI-style side panel, reuse `AiSplit`. Anything that goes below the page belongs in the
+   debug dock's group or a nested group inside the page, not a second vertical group around the tabs. Otherwise build it with
+   `Group`/`Panel`/`Separator` in its own component under `frontend/src/components/`, following the patterns in `AiSplit.jsx`.
 3. For remembering a layout that is not shared between tabs, `useDefaultLayout({ id, storage: localStorage })`
    is enough (pass `panelIds` when panels are conditional).
 4. Check both themes, a narrow window, the keyboard (arrow keys on the focused separator) and a tab switch.
