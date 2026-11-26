@@ -1,0 +1,85 @@
+# Daily check for changes to the Salesforce skills Avio bundles (backend/sf_skills/, from forcedotcom/sf-skills).
+# When the latest upstream release changed any bundled file, opens (or refreshes) one pull request into the
+# default branch with the new files. The skill text goes into AI prompts, so a person reads and merges it.
+# It never merges, tags or releases anything: a merged sync ships with the next release.
+#
+# Details and safety rules: scripts/sync_sf_skills.py and docs/github-ci-cd.md (piece A).
+#
+# Repo setting needed: Settings > Actions > General > Workflow permissions >
+#   "Allow GitHub Actions to create and approve pull requests".
+# Scheduled runs only happen from the default branch's copy of this file.
+name: Sync Salesforce skills
+
+on:
+  schedule:
+    - cron: "17 6 * * *"      # daily, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-sf-skills
+  cancel-in-progress: false
+
+env:
+  SYNC_BRANCH: bot/sf-skills-sync
+
+jobs:
+  sync:
+    if: github.repository == 'doppiomacchiatto/avio'   # forks don't run the daily job
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write          # push the sync branch
+      pull-requests: write     # open / update the pull request
+      actions: write           # start the Tests workflow on the sync branch (see below)
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Compare bundled skills with the latest upstream release
+        id: sync
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/sync_sf_skills.py --body "$RUNNER_TEMP/pr-body.md"
+
+      - name: Open or update the pull request
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.repository.default_branch }}
+          TAG: ${{ steps.sync.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Only the skills folder may change; anything else means the script misbehaved
+          if git status --porcelain | grep -v ' backend/sf_skills/'; then
+            echo "::error::unexpected files changed outside backend/sf_skills/"; exit 1
+          fi
+
+          # Skip if an open sync PR already carries exactly this skill text (VERSION's date aside)
+          pr=$(gh pr list --head "$SYNC_BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ] && git fetch --quiet origin "$SYNC_BRANCH" \
+             && git diff --quiet FETCH_HEAD -- backend/sf_skills ':(exclude)backend/sf_skills/VERSION'; then
+            echo "PR #$pr already has these changes; nothing to do."; exit 0
+          fi
+
+          git checkout -B "$SYNC_BRANCH"
+          git add backend/sf_skills
+          git commit -m "chore(skills): sync Salesforce skills from forcedotcom/sf-skills $TAG"
+          git push --force origin "$SYNC_BRANCH"
+
+          title="Sync Salesforce skills from forcedotcom/sf-skills $TAG"
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md"
+          else
+            gh pr create --base "$BASE" --head "$SYNC_BRANCH" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md"
+          fi
+
+          # A push or PR made with GITHUB_TOKEN does not trigger other workflows (GitHub's loop guard),
+          # but a workflow_dispatch does. Its results attach to the branch's head commit, so they show on the PR.
+          gh workflow run test.yml --ref "$SYNC_BRANCH"

@@ -1,5 +1,10 @@
 import { useState, useRef } from "react";
 import { api } from "../api/client";
+import FloatingPanel, { DRAG_HANDLE } from "../components/FloatingPanel";
+import AiSplit from "../components/AiSplit";
+import TabAiPanel, { AiToggle } from "../components/TabAiPanel";
+import { useSessionState } from "../sessionStore";
+import { REST_CHIPS, REQUEST_LANGS, buildRestSystem, parseRequest } from "../tabAi";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -74,25 +79,25 @@ const SAMPLES = [
 ];
 
 // ── Help / Samples modal ───────────────────────────────────────────────────
+// A floating panel with no backdrop: it stays open while samples are loaded and the editor is used.
 function HelpModal({ onClose, onLoad }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 overflow-hidden">
+    <FloatingPanel onClose={onClose} label="REST Explorer — How to Use" backdrop={false}
+      width={672} height={620} minWidth={380} minHeight={260}
+      className="rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
 
-        {/* Header */}
-        <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-gray-800">
+        {/* Header (drag to move) */}
+        <div className={`shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-gray-800 cursor-move select-none ${DRAG_HANDLE}`}>
           <div>
             <p className="text-sm font-bold text-slate-900 dark:text-slate-100">REST Explorer — How to Use</p>
-            <p className="text-xs text-slate-400 mt-0.5">Click any sample to load it into the editor</p>
+            <p className="text-xs text-slate-400 mt-0.5">Click any sample to load it into the editor. This panel stays open; drag it aside.</p>
           </div>
           <button onClick={onClose}
             className="text-slate-400 hover:text-slate-700 text-lg dark:hover:text-slate-200 leading-none transition-colors">✕</button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-5">
 
           {/* How to use */}
           <section className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-slate-700 dark:bg-blue-950/40 dark:border-blue-900 dark:text-slate-300 leading-relaxed space-y-1.5">
@@ -112,7 +117,7 @@ function HelpModal({ onClose, onLoad }) {
                 {group.items.map(item => (
                   <button
                     key={item.path}
-                    onClick={() => { onLoad(item); onClose(); }}
+                    onClick={() => onLoad(item)}
                     className="flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-100 bg-slate-50 hover:bg-blue-50 hover:border-blue-200 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:border-gray-600 text-left transition-colors group"
                   >
                     <span className={`shrink-0 font-bold text-xs px-1.5 py-0.5 rounded ${METHOD_COLORS[item.method]}`}>
@@ -137,8 +142,7 @@ function HelpModal({ onClose, onLoad }) {
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </FloatingPanel>
   );
 }
 
@@ -212,6 +216,7 @@ export default function RestExplorer({ org }) {
   const [histOpen,  setHistOpen] = useState(false);
   const [helpOpen,  setHelpOpen] = useState(false);
   const pathRef = useRef(null);
+  const [aiOpen,    setAiOpen]   = useSessionState("rest.ai.open", false);   // stays open when you return to this tab
 
   const needsBody = ["POST", "PUT", "PATCH"].includes(method);
 
@@ -249,6 +254,16 @@ export default function RestExplorer({ org }) {
     setTimeout(() => executeWith(item.method, item.path, null), 0);
   }
 
+  // "Use Request" on an AI reply: fill in the editor only. The user still clicks Execute.
+  function applyAiRequest(text) {
+    const r = parseRequest(text);
+    if (!r) return;
+    setMethod(r.method);
+    setPath(r.path);
+    setBody(r.body);
+    pathRef.current?.focus();
+  }
+
   async function executeWith(m, p, b) {
     if (!org) return;
     setLoading(true);
@@ -275,7 +290,22 @@ export default function RestExplorer({ org }) {
       {helpOpen && (
         <HelpModal onClose={() => setHelpOpen(false)} onLoad={loadSample} />
       )}
-    <div className="flex flex-col h-full overflow-hidden bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100">
+    <div className="flex h-full overflow-hidden">
+    <AiSplit
+      open={aiOpen}
+      ai={
+        <TabAiPanel
+          surface="rest"
+          chips={REST_CHIPS}
+          buildSystem={() => buildRestSystem({ org, request: { method, path, body }, response, history })}
+          action={{ langs: REQUEST_LANGS, label: "→ Use Request", onUse: applyAiRequest }}
+          placeholder="Ask AI about the REST API…"
+          emptyHint={["Ask AI to build a request or explain a response.", "Your current request and the last response are sent as context."]}
+          onClose={() => setAiOpen(false)}
+        />
+      }
+    >
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100">
 
       {/* ── Toolbar ──────────────────────────────────────────────────────── */}
       <div className="shrink-0 border-b border-slate-200 px-4 py-3 flex flex-col gap-2 dark:border-gray-700">
@@ -357,6 +387,8 @@ export default function RestExplorer({ org }) {
           >
             ?
           </button>
+
+          <AiToggle open={aiOpen} onToggle={() => setAiOpen(o => !o)} />
 
           {/* Execute */}
           <button
@@ -457,6 +489,8 @@ export default function RestExplorer({ org }) {
           </>
         )}
       </div>
+    </div>
+    </AiSplit>
     </div>
     </>
   );

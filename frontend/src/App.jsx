@@ -17,6 +17,7 @@ import { debugLog, setDebugSource } from "./debugLog";
 import { RETENTION_DAYS, unsavedChats, hasUnsavedChats, saveUnsavedToApp, resetSurface } from "./chatHistory";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import FloatingPanel, { DRAG_HANDLE } from "./components/FloatingPanel";
 
 const TABS = [
   { id: "fls",      label: "🔍 FLS Explorer"       },
@@ -889,10 +890,9 @@ export default function App() {
 
       {/* ── Help modal ───────────────────────────────────────────────────────── */}
       {aboutOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setAboutOpen(false)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+        <FloatingPanel onClose={() => setAboutOpen(false)} label="Avio help" width={512} height={600} minWidth={380} minHeight={300}>
             {/* Hero banner */}
-            <div className="bg-[#1a2d5a] px-6 pt-6 pb-0">
+            <div className={`bg-[#1a2d5a] px-6 pt-6 pb-0 shrink-0 cursor-move select-none ${DRAG_HANDLE}`}>
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
@@ -920,6 +920,7 @@ export default function App() {
                 ))}
               </div>
             </div>
+            <div className="flex-1 min-h-0 overflow-y-auto">
 
             {/* Tab: About */}
             {helpTab === "about" && (
@@ -1122,8 +1123,8 @@ export default function App() {
                 </div>
               </div>
             )}
-          </div>
-        </div>
+            </div>
+        </FloatingPanel>
       )}
 
       {/* ── Settings modal ───────────────────────────────────────────────────── */}
@@ -1768,9 +1769,9 @@ export default function App() {
 
       {/* API Limits modal */}
       {limitsOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setLimitsOpen(false)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-lg w-full mx-4 p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
+        <FloatingPanel onClose={() => setLimitsOpen(false)} label="Salesforce API Limits" width={512} height="auto" resizable={false}>
+          <div className="p-6 flex flex-col gap-4">
+            <div className={`flex items-center justify-between cursor-move select-none ${DRAG_HANDLE}`}>
               <h2 className="text-base font-bold text-gray-800 dark:text-white">Salesforce API Limits</h2>
               <button onClick={() => setLimitsOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg leading-none">✕</button>
             </div>
@@ -1802,7 +1803,7 @@ export default function App() {
               </p>
             </div>
           </div>
-        </div>
+        </FloatingPanel>
       )}
     </div>
   );
