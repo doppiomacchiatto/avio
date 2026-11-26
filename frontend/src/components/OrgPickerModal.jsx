@@ -22,7 +22,7 @@ export default function OrgPickerModal({ onSelect, onCancel }) {
   const [refreshError,  setRefreshError]  = useState("");
   const [debugOpen,     setDebugOpen]     = useState(false);
   const [addingOrg,     setAddingOrg]     = useState(false);   // login panel shown even though orgs exist
-  const debugCount = useDebugLogCount();
+  const debugCount = useDebugLogCount(false);   // the overlay shows every entry
 
   function addLog(msg, level = "info") {
     debugLog(`[OrgPicker] ${msg}`, level);

@@ -13,6 +13,7 @@ let entries = [];
 let nextId = 1;
 let source = null;   // the active tab, set by App on every tab change
 let open = false;    // whether the dock is expanded
+let scope = "tab";   // what the dock shows: "tab" (the active tab's entries) or "all"
 
 const listeners = new Set();
 
@@ -25,9 +26,11 @@ function subscribe(listener) {
   return () => listeners.delete(listener);
 }
 
-/** Tag the entries written from now on with this tab id. */
+/** Tag the entries written from now on with this tab id. It is also the tab the dock's "This tab" shows. */
 export function setDebugSource(tab) {
+  if (tab === source) return;
   source = tab;
+  emit();
 }
 
 /**
@@ -57,13 +60,33 @@ export function setDebugOpen(value) {
   emit();
 }
 
+export function setDebugScope(value) {
+  if (value === scope) return;
+  scope = value;
+  emit();
+}
+
+export function useDebugScope() {
+  return useSyncExternalStore(subscribe, () => scope);
+}
+
 export function useDebugLog() {
   return useSyncExternalStore(subscribe, () => entries);
 }
 
-/** Only the count, so a badge does not re-render on anything else. */
-export function useDebugLogCount() {
-  return useSyncExternalStore(subscribe, () => entries.length);
+function countInScope() {
+  if (scope === "all") return entries.length;
+  let n = 0;
+  for (const e of entries) if (e.source === source) n++;
+  return n;
+}
+
+/**
+ * Only the count, so a badge does not re-render on anything else. By default it counts what the dock
+ * shows (the active tab's entries under "This tab"); pass false to count every entry.
+ */
+export function useDebugLogCount(inScope = true) {
+  return useSyncExternalStore(subscribe, inScope ? countInScope : () => entries.length);
 }
 
 export function useDebugOpen() {

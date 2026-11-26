@@ -88,12 +88,25 @@ text = await dockText();
 check("the filter narrows the list", text.includes("probe from the SOQL tab") && !text.includes("probe error from the FLS tab"), text);
 await page.locator("#debug").getByLabel("Filter log entries").fill("");
 
-// Clear in This tab only clears this tab
+// the 🐞 button counts what the dock shows
+const bugCount = async () => Number(((await bug().innerText()).match(/\((\d+)\)/) || [0, 0])[1]);
+const dockCount = async () => Number(((await page.locator("#debug").innerText()).match(/Debug Log \((\d+)\)/) || [0, 0])[1]);
+check("All: the 🐞 button and the dock show the same count", (await bugCount()) === (await dockCount()) && (await bugCount()) > 0, `${await bugCount()} vs ${await dockCount()}`);
 await scope("This tab");
+check("This tab: the 🐞 button and the dock show the same count", (await bugCount()) === (await dockCount()) && (await bugCount()) > 0, `${await bugCount()} vs ${await dockCount()}`);
+await tab("FLS Explorer");
+await settle();
+check("after a tab switch they still match", (await bugCount()) === (await dockCount()), `${await bugCount()} vs ${await dockCount()}`);
+await tab("SOQL Runner");
+await page.locator("textarea").first().waitFor();
+
+// Clear in This tab only clears this tab
 await page.locator("#debug").getByRole("button", { name: "Clear" }).click();
+check("Clear: the 🐞 button drops its count", (await bug().innerText()).trim() === "🐞 Debug", await bug().innerText());
 await scope("All");
 text = await dockText();
 check("Clear in This tab keeps the other tabs' entries", text.includes("probe error from the FLS tab") && !text.includes("probe from the SOQL tab"), text);
+check("All after Clear: the counts still match", (await bugCount()) === (await dockCount()), `${await bugCount()} vs ${await dockCount()}`);
 
 // opening and closing the dock does not remount the page
 const editor = page.locator("textarea").first();

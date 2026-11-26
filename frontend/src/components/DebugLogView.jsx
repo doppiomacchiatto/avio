@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { useDebugLog, clearDebugLog } from "../debugLog";
+import { useDebugLog, useDebugScope, setDebugScope, clearDebugLog } from "../debugLog";
 
 const LEVEL_STYLE = {
   info:  "text-green-300",
@@ -28,7 +28,7 @@ function fmt(ts) {
  */
 export default function DebugLogView({ tab = null, open = true, onToggle, onClose }) {
   const entries = useDebugLog();
-  const [scope, setScope] = useState("tab");
+  const scope = useDebugScope();   // in the store, so the 🐞 button counts the same entries
   const [filter, setFilter] = useState("");
   const [copied, setCopied] = useState(false);
   const bodyRef = useRef(null);
@@ -83,7 +83,7 @@ export default function DebugLogView({ tab = null, open = true, onToggle, onClos
                 {[["tab", "This tab"], ["all", "All"]].map(([id, label]) => (
                   <button
                     key={id}
-                    onClick={() => setScope(id)}
+                    onClick={() => setDebugScope(id)}
                     aria-pressed={scope === id}
                     className={`text-xs font-normal px-2 py-0.5 transition-colors ${
                       scope === id
