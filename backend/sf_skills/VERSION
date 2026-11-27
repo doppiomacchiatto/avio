@@ -1,5 +1,5 @@
 source: https://github.com/forcedotcom/sf-skills
-fetched: 2026-11-12
-upstream-commit: 0c7cb93 2026-11-06
-apex-templates: platform-apex-generate/assets/*.cls and references/*.cls (the files its SKILL.md links), fetched 2026-11-18 from the same commit (0c7cb9304a071266264628a84bc498b23cde9c13)
+fetched: 2026-11-27
+upstream-commit: b757b21 2026-11-27 (release 1.72.0, b757b21a206bd963b747f9088e147f2fb777986a)
+apex-templates: platform-apex-generate/assets/*.cls and references/*.cls (the files its SKILL.md links), from the same commit
 license: Apache-2.0, Copyright (c) 2026 Salesforce, Inc. (LICENSE.txt in this folder, copied unchanged from the same upstream commit). The bundled files are unmodified copies.
