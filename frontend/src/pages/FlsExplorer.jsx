@@ -7,6 +7,7 @@ import AiSplit from "../components/AiSplit";
 import TabAiPanel, { AiToggle } from "../components/TabAiPanel";
 import { useSessionState } from "../sessionStore";
 import { FLS_CHIPS, buildFlsSystem } from "../tabAi";
+import DraggableGuide, { GUIDE_HANDLE } from "../components/DraggableGuide";
 
 export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjectsShared, onApiCall }) {
   const [aiOpen, setAiOpen] = useSessionState("fls.ai.open", false);   // stays open when you return to this tab
@@ -317,8 +318,8 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
 
       {/* ── Floating guidance panel ─────────────────────────────────────────── */}
       {guideOpen && !aiOpen && (
-        <div className="absolute top-3 right-3 z-20 w-56 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded-xl shadow-lg overflow-hidden">
-          <div className="flex items-center justify-between bg-blue-600 px-3 py-2">
+        <DraggableGuide className="absolute top-3 right-3 z-20 w-56 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded-xl shadow-lg overflow-hidden">
+          <div className={`flex items-center justify-between bg-blue-600 px-3 py-2 cursor-move select-none ${GUIDE_HANDLE}`} title="Drag to move">
             <span className="text-xs font-semibold text-white tracking-wide">How to use</span>
             <button onClick={() => setGuideOpen(false)} className="text-blue-200 hover:text-white text-sm leading-none">✕</button>
           </div>
@@ -340,7 +341,7 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
               ⚠ Max 25 objects per export
             </p>
           </div>
-        </div>
+        </DraggableGuide>
       )}
 
       {/* ── Object sidebar ──────────────────────────────────────────────────── */}
