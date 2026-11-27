@@ -64,6 +64,10 @@ check("get returns the messages with skills", g["messages"][1]["skills"] == ["Ap
 
 try: chat_store.list_chats("evil"); check("unknown surface rejected on list", False, "no error")
 except chat_store.InvalidChat: check("unknown surface rejected on list", True)
+for surf in ("fls", "profiles", "rest"):   # the AI panels on FLS Explorer, Profiles & PermSets and REST Explorer
+    tab = chat_store.save_chat(surf, [U("x")], now=NOW + timedelta(seconds=20))
+    check(f"save accepts the {surf} tab", tab["surface"] == surf and chat_store.get_chat(tab["id"], now=NOW + timedelta(seconds=21))["count"] == 1, str(tab))
+    chat_store.delete_chat(tab["id"])
 for surf in ("evil", "", "../x", "APEX"):
     try: chat_store.save_chat(surf, [U("x")], now=NOW); check(f"save rejects surface {surf!r}", False, "no error")
     except chat_store.InvalidChat: check(f"save rejects surface {surf!r}", True)

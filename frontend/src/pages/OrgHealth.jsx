@@ -5,13 +5,14 @@
 import { useState, useRef, useEffect } from "react";
 import { api, waitForBackend } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   HEALTH_CHECKS, CHECK_CATEGORIES,
   CATEGORY_ICONS, STATUS_ICON, STATUS_COLOR,
 } from "../data/healthChecks";
+import { debugLog, clearDebugLog } from "../debugLog";
+import FloatingPanel, { DRAG_HANDLE } from "../components/FloatingPanel";
 
 // ── HTML report generator ─────────────────────────────────────────────────────
 const esc = (s) => String(s ?? "")
@@ -154,20 +155,13 @@ function CheckDetailModal({ chk, result, org, onClose }) {
     return () => { cancelled = true; };
   }, [chk, org]);
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+  // FloatingPanel closes on Esc.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-
-      <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className={`shrink-0 flex items-start gap-3 px-5 py-4 border-b ${headerBg}`}>
+    <FloatingPanel onClose={onClose} label={chk.label} backdrop="bg-black/70 backdrop-blur-sm"
+      width={672} height={620} minWidth={380} minHeight={240}
+      className="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl">
+        {/* Header (drag to move) */}
+        <div className={`shrink-0 flex items-start gap-3 px-5 py-4 border-b cursor-move select-none ${DRAG_HANDLE} ${headerBg}`}>
           <span className="text-xl mt-0.5">{STATUS_ICON[status]}</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-slate-900 dark:text-gray-100 leading-tight">{chk.label}</p>
@@ -178,7 +172,7 @@ function CheckDetailModal({ chk, result, org, onClose }) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5 bg-white dark:bg-gray-800">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-5 bg-white dark:bg-gray-800">
           {chk.tip && (
             <section>
               <div className="flex items-center gap-2 mb-2">
@@ -224,8 +218,7 @@ function CheckDetailModal({ chk, result, org, onClose }) {
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </FloatingPanel>
   );
 }
 
@@ -332,17 +325,11 @@ export default function OrgHealth({ org, onApiCall }) {
   const [current,  setCurrent]  = useState(null);
   const [activeCategory, setActiveCategory] = useState(null);
   const [runScope, setRunScope] = useState(null); // null = all, string = single category
-  const [debugLog,  setDebugLog]  = useState([]);
-  const [debugOpen, setDebugOpen] = useState(false);
   const cancelRef = useRef(false);
   const lastOrg   = useRef(null);
 
-  function log(msg, type = "info") {
-    const ts = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : type === "warn" ? "⚠️" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // Reset when org changes
   useEffect(() => {
@@ -393,7 +380,7 @@ export default function OrgHealth({ org, onApiCall }) {
       : HEALTH_CHECKS;
     setRunScope(filterCat ?? null);
     setPhase("running");
-    setDebugLog([]);
+    clearDebugLog("health");
     log(`Starting ${checksToRun.length} check(s)${filterCat ? ` in ${filterCat}` : ""}…`);
     // Keep existing results for other categories when running a single one
     if (filterCat) {
@@ -625,14 +612,6 @@ export default function OrgHealth({ org, onApiCall }) {
           )}
         </div>
       </div>
-
-      {/* ── Debug log ───────────────────────────────────────────────────────── */}
-      <DebugLogPanel
-        entries={debugLog}
-        open={debugOpen}
-        onToggle={() => setDebugOpen((o) => !o)}
-        onClear={() => setDebugLog([])}
-      />
 
       {/* ── Export saved toast ──────────────────────────────────────────────── */}
       {exportToast && (

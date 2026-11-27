@@ -7,7 +7,6 @@
 import { useState, useEffect, useRef } from "react";
 import { api, apiStream, stopStream } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
 import { parseBlocks, isLang, SOQL_LANGS, CONTINUE_PROMPT } from "../aiBlocks";
 import { SlowHint, StopButton, StoppedNotice, TruncatedNotice, SkillsUsed } from "../components/AiNotices";
@@ -17,6 +16,7 @@ import { useSessionState } from "../sessionStore";
 import AiSplit from "../components/AiSplit";
 import AiHistoryStrip from "../components/AiHistoryStrip";
 import { countTargets, countRecords } from "../data/recordCounts";
+import { debugLog } from "../debugLog";
 
 const PAGE_SIZE = 50;
 
@@ -213,8 +213,6 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   const [error,       setError]      = useState("");
   const [history,     setHistory]    = useState([]);
   const [historyOpen, setHistoryOpen]= useState(true);
-  const [debugLog,    setDebugLog]   = useState([]);
-  const [debugOpen,   setDebugOpen]  = useState(false);
   const [aiOpen,      setAiOpen]     = useSessionState("soql.ai.open", false);   // stays open when you return to this tab
   const [counting,    setCounting]   = useState(false);
 
@@ -228,12 +226,8 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
   const [fieldLoading, setFieldLoading]= useState(null);
   const [sidebarOpen,  setSidebarOpen] = useState(true);
 
-  function log(msg, type = "info") {
-    const ts = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : "ℹ️";
-    setDebugLog(l => [...l, { ts, icon, msg }]);
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // Load history on mount
   useEffect(() => {
@@ -564,15 +558,6 @@ export default function SoqlRunner({ org, ctx, setCtx, loadObjects, onApiCall })
           </div>
         )}
 
-        {/* Debug log (collapsible) */}
-        <DebugLogPanel
-          entries={debugLog}
-          open={debugOpen}
-          onToggle={() => setDebugOpen((o) => !o)}
-          onClear={() => setDebugLog([])}
-          heightClass="h-36"
-          className="shrink-0"
-        />
       </AiSplit>
     </div>
   );

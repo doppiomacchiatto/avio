@@ -128,7 +128,7 @@ const carried = sent.find((m) => m.role === "assistant" && m.content.includes("8
 check("AI Chat: the follow-up sends the report text to the AI as context", !!carried, JSON.stringify(sent).slice(0, 300));
 
 // A typed request (the old chip's prompt) runs the counts too, without asking the AI
-await page.getByRole("button", { name: /Clear/ }).click();
+await page.locator("main").getByRole("button", { name: /Clear/ }).click();   // not the debug log's Clear
 queries = []; peak = 0; aiBody = null;
 await page.locator("textarea").fill("List the top objects in this org by record count. Show the results in a clear table.");
 await page.getByRole("button", { name: "Send" }).click();

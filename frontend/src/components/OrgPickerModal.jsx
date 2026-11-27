@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, waitForBackend } from "../api/client";
 import Spinner from "./Spinner";
 import OrgLoginPanel from "./OrgLoginPanel";
-import { debugLog, useDebugLog } from "../debugLog";
+import { debugLog, useDebugLogCount } from "../debugLog";
 import DebugLogModal from "./DebugLogModal";
 
 // The org list from the last `sf org list`, kept until Avio closes. The CLI takes several seconds,
@@ -22,7 +22,7 @@ export default function OrgPickerModal({ onSelect, onCancel }) {
   const [refreshError,  setRefreshError]  = useState("");
   const [debugOpen,     setDebugOpen]     = useState(false);
   const [addingOrg,     setAddingOrg]     = useState(false);   // login panel shown even though orgs exist
-  const debugEntries = useDebugLog();
+  const debugCount = useDebugLogCount(false);   // the overlay shows every entry
 
   function addLog(msg, level = "info") {
     debugLog(`[OrgPicker] ${msg}`, level);
@@ -264,7 +264,7 @@ export default function OrgPickerModal({ onSelect, onCancel }) {
           onClick={() => setDebugOpen(true)}
           className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-center w-full mt-1 transition-colors"
         >
-          🐞 Debug log{debugEntries.length > 0 ? ` (${debugEntries.length})` : ""}
+          🐞 Debug log{debugCount > 0 ? ` (${debugCount})` : ""}
         </button>
 
         </div>{/* end inner p-6 */}

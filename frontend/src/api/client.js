@@ -53,7 +53,7 @@ export async function api(path, opts = {}) {
     return res;
   } catch (e) {
     const firstLine = String(e?.message || e).split("\n")[0];
-    debugLog(`← ${method} ${path} FAILED (${((performance.now() - t0) / 1000).toFixed(1)}s): ${firstLine}`, "error");
+    debugLog(`← ${method} ${path} FAILED (${((performance.now() - t0) / 1000).toFixed(1)}s): ${firstLine}`, "error", { reveal: false });
     throw e;
   }
 }

@@ -32,12 +32,14 @@ async function start() {
   await page.getByRole("button", { name: "Connect to org" }).click();
 }
 const tab = (name) => page.getByRole("button", { name: new RegExp(name) }).first().click();
-const sep = () => page.locator('[role="separator"]');
+// the AI panel's divider (the debug dock at the bottom has one too)
+const AI_SEP = '[role="separator"][title^="Drag to resize the AI panel"]';
+const sep = () => page.locator(AI_SEP);
 const aiToggle = () => page.getByRole("button", { name: /^\S* ?AI$/ });
 const openAi = async () => { if (!(await sep().count())) await aiToggle().first().click(); await sep().waitFor(); };
 const width = () => page.evaluate(() => Math.round(document.getElementById("ai").getBoundingClientRect().width));
 const restWidth = () => page.evaluate(() => Math.round(document.getElementById("main").getBoundingClientRect().width));
-const groupWidth = () => page.evaluate(() => document.querySelector("[data-group]").getBoundingClientRect().width);
+const groupWidth = () => page.evaluate(() => document.getElementById("main").closest("[data-group]").getBoundingClientRect().width);
 async function drag(dx) {
   const b = await sep().boundingBox();
   const x = b.x + b.width / 2, y = b.y + 200;
@@ -127,7 +129,7 @@ check("the chosen width (not the clamped one) is used again once the window is l
 
 // closing and reopening the panel in the same tab keeps the width
 await aiToggle().first().click();
-await page.waitForFunction(() => !document.querySelector('[role="separator"]'));
+await page.waitForFunction((sel) => !document.querySelector(sel), AI_SEP);
 check("with the panel closed the editor takes the whole width", near(await restWidth(), await groupWidth(), 1), `${await restWidth()} of ${await groupWidth()}`);
 await aiToggle().first().click();
 await sep().waitFor();

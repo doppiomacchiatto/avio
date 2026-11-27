@@ -56,6 +56,7 @@ Tauri's `listen()` in a plain browser, which throws `transformCallback` errors: 
 | `e2e_stop.mjs` | always | Stop button, wait hint and timeout in the three AI panels (harness page); needs the close-log path |
 | `e2e.mjs` | always | saved-chat strip: restore, save, load, bad files, Delete, Dismiss (harness page) |
 | `e2e_counts.mjs` | always | Record Counts: SOQL Runner's Counts button and AI Chat's Record Counts report (orgs, objects and `/api/soql` mocked per object) |
+| `e2e_debug.mjs` | always | the debug log: the dock at the bottom (🐞 button, opens on an error, This tab / All, filter, Clear, resize, remembered height, page not remounted) and the org picker's overlay |
 
 **The harness page.** `e2e_stop.mjs` and `e2e.mjs` open `http://localhost:5199/_harness/index.html`. Its source is
 `tests/e2e/harness/` (`index.html`, `main.jsx`); `vite.harness.config.mjs` keeps `frontend/` as Vite's root (so

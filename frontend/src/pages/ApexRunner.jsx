@@ -10,7 +10,6 @@ import { useSessionState } from "../sessionStore";
 import AiSplit from "../components/AiSplit";
 import AiHistoryStrip from "../components/AiHistoryStrip";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import { debugLog } from "../debugLog";
 
 const PLACEHOLDER = `// Anonymous Apex
@@ -452,8 +451,6 @@ export default function ApexRunner({ org, onApiCall }) {
   const [error,       setError]       = useState("");
   const [levels,      setLevels]      = useState(initLevels);
   const [resultFilter,setResultFilter]= useState("all");
-  const [debugOpen,   setDebugOpen]   = useState(false);
-  const [debugLog,    setDebugLog]    = useState([]);
   const [aiOpen,      setAiOpen]      = useSessionState("apex.ai.open", false);   // stays open when you return to this tab
   const [apiVersion,  setApiVersion]  = useState("68.0");  // for generated -meta.xml files
 
@@ -471,12 +468,8 @@ export default function ApexRunner({ org, onApiCall }) {
     setLevels((prev) => ({ ...prev, [key]: val }));
   }
 
-  function log(msg, type = "info") {
-    const ts   = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // Build a log level string for the SF CLI: highest level wins across categories
   function effectiveLogLevel() {
@@ -682,15 +675,6 @@ export default function ApexRunner({ org, onApiCall }) {
           </div>
         )}
 
-        {/* Debug log (collapsible) */}
-        <DebugLogPanel
-          entries={debugLog}
-          open={debugOpen}
-          onToggle={() => setDebugOpen((o) => !o)}
-          onClear={() => setDebugLog([])}
-          heightClass="h-36"
-          className="shrink-0"
-        />
       </AiSplit>
     </div>
   );

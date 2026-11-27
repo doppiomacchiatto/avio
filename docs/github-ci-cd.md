@@ -1,6 +1,6 @@
 # GitHub CI/CD plan
 
-Status: **proposed, nothing built yet.** Written 2026-11-15 during the v1.0.2-beta work. Today every release is built by hand on the developer's Windows machine (`npm run tauri:build`), the hashes are copied into the release notes, and the GitHub release is published through the browser.
+Status: **piece B (release.yml, test.yml) and piece A (sync-sf-skills.yml) are built; the plan text below is kept for the reasoning.** Written 2026-11-15 during the v1.0.2-beta work. Today every release is built by hand on the developer's Windows machine (`npm run tauri:build`), the hashes are copied into the release notes, and the GitHub release is published through the browser.
 
 Two independent pieces are planned:
 
@@ -102,6 +102,10 @@ A person reviews the draft, installs one build, and presses **Publish**. Nothing
 ---
 
 ## Piece A: skill sync pull request
+
+**Built (2026-11-25):** [`.github/workflows/sync-sf-skills.yml`](../.github/workflows/sync-sf-skills.yml) runs **daily** (06:17 UTC) and on demand, using [`scripts/sync_sf_skills.py`](../scripts/sync_sf_skills.py). Differences from the plan below: there is no `UPSTREAM.json`; the script compares every file under `backend/sf_skills/` (except `VERSION`, including the Apex templates and `LICENSE.txt`) with the latest upstream release's commit, and records the release in `VERSION`. When something changed it force-pushes `bot/sf-skills-sync` and opens or refreshes one PR into the default branch, then starts the Tests workflow on that branch with `workflow_dispatch` (a PR opened with `GITHUB_TOKEN` does not trigger `pull_request` workflows). New upstream files and files gone upstream are listed in the PR body, never added or deleted. It needs **Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests**, and only runs once the workflow is on the default branch. Run `python scripts/sync_sf_skills.py --check` locally to see the state without changing anything.
+
+The original plan:
 
 **Trigger:** a weekly `schedule` (cron) plus `workflow_dispatch`.
 

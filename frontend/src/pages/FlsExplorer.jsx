@@ -1,10 +1,16 @@
 import { useState, useRef } from "react";
 import { api, isTauri } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { debugLog } from "../debugLog";
+import AiSplit from "../components/AiSplit";
+import TabAiPanel, { AiToggle } from "../components/TabAiPanel";
+import { useSessionState } from "../sessionStore";
+import { FLS_CHIPS, buildFlsSystem } from "../tabAi";
 
 export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjectsShared, onApiCall }) {
+  const [aiOpen, setAiOpen] = useSessionState("fls.ai.open", false);   // stays open when you return to this tab
+  const [vrLoaded, setVrLoaded] = useState(false);                     // the rules of the selected object were fetched
   // Objects come from shared ctx — no local copy needed
   const objects    = ctx?.objects || [];
   const objLoaded  = ctx?.objectsLoaded || false;
@@ -18,8 +24,6 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
   const [exporting,   setExporting]   = useState(false);
   const [exportedFiles, setExportedFiles] = useState([]);
   const cancelRef = useRef(false);
-  const [debugOpen,   setDebugOpen]   = useState(false);
-  const [debugLog,    setDebugLog]    = useState([]);
 
   // Validation Rules state
   const [vrRules,       setVrRules]       = useState([]);
@@ -54,13 +58,8 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
     });
   }
 
-  function log(msg, type = "info") {
-    const ts = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    // Auto-open on errors
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // ── Load Objects — delegates to shared App.jsx loader ──────────────────────
   async function loadObjects() {
@@ -79,6 +78,7 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
     setLoadingFld(true);
     setFields([]);
     setVrRules([]);
+    setVrLoaded(false);
     setVrSnapshot(null);
     setVrOpen(false);
     log(`Loading fields for ${obj.label} (${obj.apiName})…`);
@@ -106,6 +106,7 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
       const d = await api(`/api/orgs/${org.alias}/objects/${obj.apiName}/validation-rules`);
       const rules = d.rules || [];
       setVrRules(rules);
+      setVrLoaded(true);
       log(`${rules.length} validation rule(s) loaded for ${obj.label}`, "success");
       await loadVrSnapshot(obj, rules);
     } catch (e) {
@@ -315,7 +316,7 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
       )}
 
       {/* ── Floating guidance panel ─────────────────────────────────────────── */}
-      {guideOpen && (
+      {guideOpen && !aiOpen && (
         <div className="absolute top-3 right-3 z-20 w-56 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded-xl shadow-lg overflow-hidden">
           <div className="flex items-center justify-between bg-blue-600 px-3 py-2">
             <span className="text-xs font-semibold text-white tracking-wide">How to use</span>
@@ -434,14 +435,32 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
         </div>
       </aside>
 
-      {/* ── Right panel: fields (75%) + debug log (25%) ─────────────────────── */}
+      {/* ── Right panel: fields + validation rules. Right of it, while open: the AI panel ── */}
+      <AiSplit
+        open={aiOpen}
+        ai={
+          <TabAiPanel
+            surface="fls"
+            chips={FLS_CHIPS}
+            buildSystem={() => buildFlsSystem({
+              org, object: selectedObj, fields,
+              rules: fields.length ? vrRules : [], rulesLoaded: fields.length > 0 && vrLoaded,
+              exportSelection: exportSel,
+            })}
+            placeholder="Ask AI about this object's fields…"
+            emptyHint={["Ask AI about fields, access and validation rules.", "The selected object's fields and rules are sent as context."]}
+            onClose={() => setAiOpen(false)}
+          />
+        }
+      >
       <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* Fields table — takes all space when debug closed, 75% when open */}
-        <div className={`flex flex-col ${debugOpen ? "h-3/4" : "flex-1"} overflow-hidden`}>
+        {/* Fields table */}
+        <div className="flex flex-col flex-1 overflow-hidden">
           {/* Header bar */}
           <div className="px-4 py-2.5 border-b border-gray-200 dark:border-gray-700 text-sm text-gray-500 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between shrink-0">
-            <span>
+            <span className="flex items-center gap-3 min-w-0">
+              <AiToggle open={aiOpen} onToggle={() => setAiOpen((o) => !o)} />
               {loadingFld
                 ? <Spinner label="Loading fields…" />
                 : fields.length
@@ -736,15 +755,8 @@ export default function FlsExplorer({ org, ctx, setCtx, loadObjects: loadObjects
           </div>
         )}
 
-        {/* ── Debug log — collapsible ───────────────────────────────────────── */}
-        <DebugLogPanel
-          entries={debugLog}
-          open={debugOpen}
-          onToggle={() => setDebugOpen((o) => !o)}
-          onClear={() => setDebugLog([])}
-          heightClass="h-1/4"
-        />
       </div>
+      </AiSplit>
     </div>
   );
 }

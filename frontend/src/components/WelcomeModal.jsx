@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import FloatingPanel, { DRAG_HANDLE } from "./FloatingPanel";
 
 const STORAGE_KEY = "avio_welcome_seen_v1";
 
@@ -124,17 +125,9 @@ export default function WelcomeModal({ onClose }) {
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm"
-      onClick={handleClose}
-    >
-      <div
-        className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden flex flex-col"
-        style={{ maxHeight: "90vh" }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="bg-[#1a2d5a] px-6 pt-6 pb-0 shrink-0">
+    <FloatingPanel onClose={handleClose} label="Welcome to Avio" width={576} height={640} minWidth={400} minHeight={320}>
+        {/* Header (drag to move) */}
+        <div className={`bg-[#1a2d5a] px-6 pt-6 pb-0 shrink-0 cursor-move select-none ${DRAG_HANDLE}`}>
           <div className="flex items-start justify-between mb-4">
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -173,7 +166,7 @@ export default function WelcomeModal({ onClose }) {
         </div>
 
         {/* Body — scrollable */}
-        <div className="px-6 py-5 overflow-y-auto flex-1">
+        <div className="px-6 py-5 overflow-y-auto flex-1 min-h-0">
           {tab === "fls"      && <FlsTab />}
           {tab === "profiles" && <ProfilesTab />}
         </div>
@@ -190,8 +183,7 @@ export default function WelcomeModal({ onClose }) {
             Get started
           </button>
         </div>
-      </div>
-    </div>
+    </FloatingPanel>
   );
 }
 

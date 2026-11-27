@@ -1,12 +1,18 @@
 import { useState, useRef } from "react";
 import { api, isTauri, authHeaders } from "../api/client";
 import Spinner from "../components/Spinner";
-import DebugLogPanel from "../components/DebugLogPanel";
 import LoadingOverlay from "../components/LoadingOverlay";
+import FloatingPanel, { DRAG_HANDLE } from "../components/FloatingPanel";
+import { debugLog } from "../debugLog";
+import AiSplit from "../components/AiSplit";
+import TabAiPanel, { AiToggle } from "../components/TabAiPanel";
+import { useSessionState } from "../sessionStore";
+import { PROFILES_CHIPS, buildProfilesSystem } from "../tabAi";
 
 const FIELD_PAGE_SIZE = 30;
 
 export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadObjectsShared, onApiCall }) {
+  const [aiOpen, setAiOpen] = useSessionState("profiles.ai.open", false);   // stays open when you return to this tab
   // ── Principal state ────────────────────────────────────────────────────────
   const [profiles,       setProfiles]       = useState([]);
   const [permsets,       setPermsets]       = useState([]);
@@ -40,15 +46,8 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
   const cancelRef = useRef(false);
 
   // ── Debug log ─────────────────────────────────────────────────────────────
-  const [debugOpen, setDebugOpen] = useState(false);
-  const [debugLog,  setDebugLog]  = useState([]);
-
-  function log(msg, type = "info") {
-    const ts   = new Date().toISOString().slice(11, 23);
-    const icon = type === "error" ? "❌" : type === "success" ? "✅" : "ℹ️";
-    setDebugLog((l) => [...l, { ts, icon, msg }]);
-    if (type === "error") setDebugOpen(true);
-  }
+  // Writes to the app's debug log (shown in the dock at the bottom). An error opens the dock.
+  function log(msg, type = "info") { debugLog(msg, type); }
 
   // ── Loaders ────────────────────────────────────────────────────────────────
   async function loadProfiles() {
@@ -276,7 +275,7 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
   return (
     <div className="flex h-full relative">
       {/* ── Floating guidance panel ─────────────────────────────────────────── */}
-      {guideOpen && (
+      {guideOpen && !aiOpen && (
         <div className="absolute top-3 right-3 z-20 w-56 bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-700 rounded-xl shadow-lg overflow-hidden">
           <div className="flex items-center justify-between bg-blue-600 px-3 py-2">
             <span className="text-xs font-semibold text-white tracking-wide">How to use</span>
@@ -311,9 +310,9 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
 
       {/* ── Help modal ───────────────────────────────────────────────────── */}
       {helpOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setHelpOpen(false)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full mx-4 p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
+        <FloatingPanel onClose={() => setHelpOpen(false)} label="How to Export FLS" width={448} height="auto" resizable={false}>
+          <div className="p-6 flex flex-col gap-4">
+            <div className={`flex items-center justify-between cursor-move select-none ${DRAG_HANDLE}`}>
               <h2 className="text-base font-bold text-gray-800 dark:text-white">How to Export FLS</h2>
               <button onClick={() => setHelpOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg leading-none">✕</button>
             </div>
@@ -343,7 +342,7 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
               💡 The first export for each profile takes ~15s. Re-exporting the same profile with different objects is near-instant thanks to in-memory caching.
             </p>
           </div>
-        </div>
+        </FloatingPanel>
       )}
 
       {/* ── Left sidebar: principals ──────────────────────────────────────── */}
@@ -565,7 +564,23 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
         </div>
       </aside>
 
-      {/* ── Right panel: FLS detail ───────────────────────────────────────── */}
+      {/* ── Right panel: FLS detail. Right of it, while open: the AI panel ── */}
+      <AiSplit
+        open={aiOpen}
+        ai={
+          <TabAiPanel
+            surface="profiles"
+            chips={PROFILES_CHIPS}
+            buildSystem={() => buildProfilesSystem({
+              org, principal: selected, object: selectedObj, flsData,
+              profiles, permsets, checkedObjects: [...checkedObjs],
+            })}
+            placeholder="Ask AI about these permissions…"
+            emptyHint={["Ask AI about profile and permission set access.", "The selected principal and object's permissions are sent as context."]}
+            onClose={() => setAiOpen(false)}
+          />
+        }
+      >
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* Object-level perms banner */}
@@ -593,9 +608,10 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
         )}
 
         {/* FLS table header */}
-        <div className={`flex flex-col ${debugOpen ? "h-3/4" : "flex-1"} overflow-hidden`}>
+        <div className="flex flex-col flex-1 overflow-hidden">
           <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between shrink-0 gap-2">
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-gray-500 flex items-center gap-3 min-w-0">
+              <AiToggle open={aiOpen} onToggle={() => setAiOpen((o) => !o)} />
               {loadingFls
                 ? <Spinner label="Loading FLS…" />
                 : flsData
@@ -664,15 +680,8 @@ export default function ProfilesExplorer({ org, ctx, setCtx, loadObjects: loadOb
           </div>
         </div>
 
-        {/* ── Debug log ─────────────────────────────────────────────────────── */}
-        <DebugLogPanel
-          entries={debugLog}
-          open={debugOpen}
-          onToggle={() => setDebugOpen((o) => !o)}
-          onClear={() => setDebugLog([])}
-          heightClass="h-1/4"
-        />
       </div>
+      </AiSplit>
     </div>
   );
 }
